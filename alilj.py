@@ -36,6 +36,8 @@ CAPTCHA_WAIT_SECONDS = 120
 CRAWL_SUBCATEGORIES = True
 MAX_PAGES_PER_CATEGORY = 0
 REQUEST_DELAY_MS = (2000, 4000)
+GOTO_MAX_RETRIES = 5
+GOTO_RETRY_BASE_DELAY_S = 5
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -54,6 +56,15 @@ BROWSER_DEAD_MARKERS = (
     "Target page, context or browser has been closed",
     "TargetClosedError",
     "Browser has been closed",
+)
+TRANSIENT_NET_ERROR_MARKERS = (
+    "net::ERR_CONNECTION_CLOSED",
+    "net::ERR_CONNECTION_RESET",
+    "net::ERR_CONNECTION_ABORTED",
+    "net::ERR_NETWORK_CHANGED",
+    "net::ERR_INTERNET_DISCONNECTED",
+    "net::ERR_TIMED_OUT",
+    "net::ERR_HTTP2_PROTOCOL_ERROR",
 )
 
 
@@ -253,6 +264,11 @@ def is_browser_dead(exc: BaseException) -> bool:
         return True
     message = str(exc)
     return any(marker in message for marker in BROWSER_DEAD_MARKERS)
+
+
+def is_transient_network_error(exc: BaseException) -> bool:
+    message = str(exc)
+    return any(marker in message for marker in TRANSIENT_NET_ERROR_MARKERS)
 
 
 def _parse_json_body(text: str) -> dict | None:
@@ -611,8 +627,23 @@ async def sleep(short: bool = False) -> None:
 async def safe_goto(page: Page, url: str) -> None:
     if page.is_closed():
         raise RuntimeError("浏览器页面已关闭，请重启爬虫")
-    await page.goto(url, wait_until="domcontentloaded", timeout=90000)
-    await page.wait_for_timeout(2500)
+    for attempt in range(1, GOTO_MAX_RETRIES + 1):
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=90000)
+            await page.wait_for_timeout(2500)
+            return
+        except Exception as exc:
+            if is_browser_dead(exc):
+                raise
+            if is_transient_network_error(exc) and attempt < GOTO_MAX_RETRIES:
+                wait_s = GOTO_RETRY_BASE_DELAY_S * attempt + random.uniform(0, 2)
+                print(
+                    f"网络异常 ({attempt}/{GOTO_MAX_RETRIES})：{exc}\n"
+                    f"  {wait_s:.1f}s 后重试：{url}"
+                )
+                await asyncio.sleep(wait_s)
+                continue
+            raise
 
 
 async def handle_captcha(page: Page) -> bool:
