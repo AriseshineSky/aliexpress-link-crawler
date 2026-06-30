@@ -1,0 +1,80 @@
+# AliExpress category URLs (.us + .com)
+# Sort by orders to prioritize high-volume products.
+categories:
+  - name: US / Automotive
+    url: https://www.aliexpress.us/category/34/automobiles-motorcycles.html?SortType=total_tranpro_desc
+
+  - name: COM / Automotive
+    url: https://www.aliexpress.com/category/34/automobiles-motorcycles.html?SortType=total_tranpro_desc
+
+  - name: US / Toys & Games
+    url: https://www.aliexpress.us/category/26/toys-hobbies.html?SortType=total_tranpro_desc
+
+  - name: COM / Toys & Games
+    url: https://www.aliexpress.com/category/26/toys-hobbies.html?SortType=total_tranpro_desc
+
+  - name: US / Beauty & Health
+    url: https://www.aliexpress.us/category/66/beauty-health.html?SortType=total_tranpro_desc
+
+  - name: COM / Beauty & Health
+    url: https://www.aliexpress.com/category/66/beauty-health.html?SortType=total_tranpro_desc
+
+  - name: US / Jewelry & Accessories
+    url: https://www.aliexpress.us/category/1509/jewelry.html?SortType=total_tranpro_desc
+
+  - name: COM / Jewelry & Accessories
+    url: https://www.aliexpress.com/category/1509/jewelry.html?SortType=total_tranpro_desc
+
+  - name: US / Hair Extensions & Wigs
+    url: https://www.aliexpress.us/category/200001075/hair-extensions-wigs.html?SortType=total_tranpro_desc
+
+  - name: COM / Hair Extensions & Wigs
+    url: https://www.aliexpress.com/category/200001075/hair-extensions-wigs.html?SortType=total_tranpro_desc
+
+  - name: US / Pet Supplies
+    url: https://www.aliexpress.us/category/100006664/pet-products.html?SortType=total_tranpro_desc
+
+  - name: COM / Pet Supplies
+    url: https://www.aliexpress.com/category/100006664/pet-products.html?SortType=total_tranpro_desc
+
+  - name: US / Cell Phones & Accessories
+    url: https://www.aliexpress.us/category/509/cellphones-telecommunications.html?SortType=total_tranpro_desc
+
+  - name: COM / Cell Phones & Accessories
+    url: https://www.aliexpress.com/category/509/cellphones-telecommunications.html?SortType=total_tranpro_desc
+
+  - name: US / Electronics
+    url: https://www.aliexpress.us/category/44/consumer-electronics.html?SortType=total_tranpro_desc
+
+  - name: COM / Electronics
+    url: https://www.aliexpress.com/category/44/consumer-electronics.html?SortType=total_tranpro_desc
+
+  - name: US / Patio, Lawn & Garden
+    url: https://www.aliexpress.us/category/15/home-garden.html?SortType=total_tranpro_desc
+
+  - name: COM / Patio, Lawn & Garden
+    url: https://www.aliexpress.com/category/15/home-garden.html?SortType=total_tranpro_desc
+
+  - name: US / Tools & Home Improvement
+    url: https://www.aliexpress.us/category/13/home-improvement.html?SortType=total_tranpro_desc
+
+  - name: COM / Tools & Home Improvement
+    url: https://www.aliexpress.com/category/13/home-improvement.html?SortType=total_tranpro_desc
+
+  - name: US / Sports & Outdoors
+    url: https://www.aliexpress.us/category/18/sports-entertainment.html?SortType=total_tranpro_desc
+
+  - name: COM / Sports & Outdoors
+    url: https://www.aliexpress.com/category/18/sports-entertainment.html?SortType=total_tranpro_desc
+
+  - name: US / Arts, Crafts & Sewing
+    url: https://www.aliexpress.us/category/17/gifts-crafts.html?SortType=total_tranpro_desc
+
+  - name: COM / Arts, Crafts & Sewing
+    url: https://www.aliexpress.com/category/17/gifts-crafts.html?SortType=total_tranpro_desc
+
+  - name: US / Office & School Supplies
+    url: https://www.aliexpress.us/category/21/office-school-supplies.html?SortType=total_tranpro_desc
+
+  - name: COM / Office & School Supplies
+    url: https://www.aliexpress.com/category/21/office-school-supplies.html?SortType=total_tranpro_desc

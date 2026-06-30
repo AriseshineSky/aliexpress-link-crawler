@@ -1,0 +1,26 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Secrets and local config
+.env
+
+# Browser profile and runtime
+browser/
+crawl.log
+crawl.pid
+.tmp/
+
+# Crawl output
+data/
+产品链接.txt
+产品列表.jsonl
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
