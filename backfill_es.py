@@ -7,12 +7,18 @@ from pathlib import Path
 from dotenv import load_dotenv
 from elasticsearch import Elasticsearch, helpers
 
-load_dotenv(Path(__file__).resolve().parent / ".env")
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
 url = os.getenv("ELASTICSEARCH_URL")
 index = os.getenv("ELASTICSEARCH_INDEX_URLS")
-SOURCE = "aliexpress.us"
 now = datetime.now(timezone.utc).isoformat()
-links_file = Path(__file__).resolve().parent / "产品链接.txt"
+links_file = BASE_DIR / "产品链接.txt"
+
+
+def source_from_url(link: str) -> str:
+    return "aliexpress.com" if "aliexpress.com" in link else "aliexpress.us"
+
+
 actions = []
 for line in links_file.read_text(encoding="utf-8").splitlines():
     line = line.strip()
@@ -20,13 +26,14 @@ for line in links_file.read_text(encoding="utf-8").splitlines():
     if not match:
         continue
     product_id = match.group(1)
+    source = source_from_url(line)
     actions.append(
         {
             "_index": index,
-            "_id": f"{SOURCE}_{product_id}",
+            "_id": f"{source}_{product_id}",
             "_op_type": "index",
             "_source": {
-                "source": SOURCE,
+                "source": source,
                 "product_id": product_id,
                 "url": line,
                 "category": "Automotive",

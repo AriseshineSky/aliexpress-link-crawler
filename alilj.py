@@ -34,7 +34,9 @@ CATEGORIES_FILE = BASE_DIR / "config" / "categories.yaml"
 HEADLESS = False
 CAPTCHA_WAIT_SECONDS = 120
 CRAWL_SUBCATEGORIES = True
+MAX_SUBCATEGORY_DEPTH = 5
 MAX_PAGES_PER_CATEGORY = 0
+CONSECUTIVE_DUPLICATE_PAGES_TO_STOP = 3
 REQUEST_DELAY_MS = (2000, 4000)
 GOTO_MAX_RETRIES = 5
 GOTO_RETRY_BASE_DELAY_S = 5
@@ -225,11 +227,11 @@ FEEDBACK_API = "https://feedback.aliexpress.com/pc/searchEvaluation.do"
 def merge_products(products: list[ListingProduct]) -> list[ListingProduct]:
     merged: dict[str, ListingProduct] = {}
     for product in products:
-        existing = merged.get(product.product_id)
+        existing = merged.get(product.dedupe_key)
         if existing is None:
-            merged[product.product_id] = product
+            merged[product.dedupe_key] = product
             continue
-        merged[product.product_id] = ListingProduct(
+        merged[product.dedupe_key] = ListingProduct(
             product_id=product.product_id,
             url=product.url or existing.url,
             source=product.source or existing.source,
@@ -841,12 +843,24 @@ async def extract_products(page: Page, site_base: str, collector: ListingCollect
     return products
 
 
-async def discover_subcategories(page: Page, category_name: str, category_url: str) -> list[tuple[str, str]]:
-    parent_match = re.search(r"/category/(\d+)/", category_url)
-    parent_id = parent_match.group(1) if parent_match else ""
+def category_id_from_url(category_url: str) -> str:
+    match = re.search(r"/category/(\d+)/", category_url)
+    return match.group(1) if match else ""
+
+
+async def discover_direct_subcategories(
+    page: Page,
+    category_name: str,
+    category_url: str,
+    *,
+    exclude_ids: set[str] | None = None,
+) -> list[tuple[str, str]]:
+    parent_id = category_id_from_url(category_url)
     site_host = site_host_from_url(category_url)
+    excluded = exclude_ids or set()
     await safe_goto(page, category_url)
     await handle_captcha(page)
+    await scroll_listing_page(page)
     await sleep()
 
     raw_items = await page.evaluate(
@@ -857,9 +871,18 @@ async def discover_subcategories(page: Page, category_name: str, category_url: s
           const selectors = [
             'div[class*="refine"] a[href*="/category/"]',
             'div[class*="category"] a[href*="/category/"]',
+            'aside a[href*="/category/"]',
             'nav a[href*="/category/"]',
+            '[class*="sub-cate"] a[href*="/category/"]',
             'a[href*="/category/"]',
           ];
+          const skipNames = new Set([
+            'home',
+            'all categories',
+            'see all',
+            'view all',
+            'more',
+          ]);
           for (const selector of selectors) {
             for (const anchor of document.querySelectorAll(selector)) {
               const href = anchor.href || anchor.getAttribute('href') || '';
@@ -872,14 +895,13 @@ async def discover_subcategories(page: Page, category_name: str, category_url: s
               const name = (anchor.innerText || anchor.textContent || '').trim();
               if (!name || name.length < 2 || name.length > 80) continue;
               const lowered = name.toLowerCase();
-              if (['home', 'all categories', 'see all'].includes(lowered)) continue;
+              if (skipNames.has(lowered)) continue;
               seen.add(catId);
               results.push({
                 name,
                 url: href.split('?')[0] + '?SortType=total_tranpro_desc',
               });
             }
-            if (results.length) break;
           }
           return results;
         }
@@ -889,8 +911,46 @@ async def discover_subcategories(page: Page, category_name: str, category_url: s
 
     subcategories: list[tuple[str, str]] = []
     for item in raw_items or []:
+        cat_id = category_id_from_url(item["url"])
+        if cat_id in excluded:
+            continue
         subcategories.append((f"{category_name} > {item['name']}", item["url"]))
     return subcategories
+
+
+async def discover_all_subcategories(
+    page: Page,
+    category_name: str,
+    category_url: str,
+    *,
+    max_depth: int = MAX_SUBCATEGORY_DEPTH,
+) -> list[tuple[str, str]]:
+    root_id = category_id_from_url(category_url)
+    seen_ids: set[str] = {root_id} if root_id else set()
+    discovered: list[tuple[str, str]] = []
+    frontier: list[tuple[str, str, int]] = [(category_name, category_url, 0)]
+
+    while frontier:
+        parent_name, parent_url, depth = frontier.pop(0)
+        if depth >= max_depth:
+            continue
+
+        direct_subs = await discover_direct_subcategories(
+            page,
+            parent_name,
+            parent_url,
+            exclude_ids=seen_ids,
+        )
+        for sub_name, sub_url in direct_subs:
+            sub_id = category_id_from_url(sub_url)
+            if sub_id and sub_id in seen_ids:
+                continue
+            if sub_id:
+                seen_ids.add(sub_id)
+            discovered.append((sub_name, sub_url))
+            frontier.append((sub_name, sub_url, depth + 1))
+
+    return discovered
 
 
 def save_new_products(
@@ -944,9 +1004,10 @@ async def crawl_category(
         start_urls.append(wholesale_search_url(category_name, site_base))
 
     print(f"\n类目：{category_name}")
-    category_seen_ids: set[str] = set()
 
     for start_url in start_urls:
+        page_seen_ids: set[str] = set()
+        consecutive_duplicate_pages = 0
         page_no = 1
         while True:
             if MAX_PAGES_PER_CATEGORY > 0 and page_no > MAX_PAGES_PER_CATEGORY:
@@ -961,7 +1022,7 @@ async def crawl_category(
 
             products = await extract_products(page, site_base, collector)
             current_ids = {p.product_id for p in products}
-            fresh_in_category = current_ids - category_seen_ids
+            fresh_on_page = current_ids - page_seen_ids
             new_count = save_new_products(products, seen_links, category_name, es_writer)
             if es_writer is not None:
                 es_writer.flush()
@@ -973,22 +1034,26 @@ async def crawl_category(
             )
             print(
                 f"第 {page_no} 页：发现 {len(products)} 个商品（{with_metrics} 个含评分+评论数），"
-                f"本类目新商品 {len(fresh_in_category)} 个，保存新增 {new_count} 个"
+                f"本页新商品 {len(fresh_on_page)} 个，保存新增 {new_count} 个"
             )
 
             if not current_ids:
                 print(f"第 {page_no} 页没有数据，判定 {category_name} 到最后一页。")
                 break
-            if page_no > 1 and not fresh_in_category:
-                print(f"第 {page_no} 页和前面页面数据重复，判定 {category_name} 没有更多页。")
-                break
+            if page_no > 1 and not fresh_on_page:
+                consecutive_duplicate_pages += 1
+                if consecutive_duplicate_pages >= CONSECUTIVE_DUPLICATE_PAGES_TO_STOP:
+                    print(
+                        f"连续 {consecutive_duplicate_pages} 页无新商品，"
+                        f"判定 {category_name} 没有更多页。"
+                    )
+                    break
+            else:
+                consecutive_duplicate_pages = 0
 
-            category_seen_ids.update(current_ids)
+            page_seen_ids.update(current_ids)
             page_no += 1
             await sleep()
-
-        if category_seen_ids:
-            return total_new
 
     return total_new
 
@@ -1035,6 +1100,9 @@ async def main_async() -> None:
     print(f"商品列表文件: {PRODUCTS_JSONL}")
     print(f"类目数量: {len(categories)}（含 US / COM）")
     print(f"子类目发现: {'开启' if CRAWL_SUBCATEGORIES else '关闭'}")
+    if CRAWL_SUBCATEGORIES:
+        print(f"子类目最大深度: {MAX_SUBCATEGORY_DEPTH}")
+    print(f"分页重复停止阈值: 连续 {CONSECUTIVE_DUPLICATE_PAGES_TO_STOP} 页无新商品")
     print()
 
     seen_links = load_seen_links()
@@ -1054,9 +1122,13 @@ async def main_async() -> None:
                             if context is None or page is None or page.is_closed():
                                 await close_browser(context)
                                 context, page, collector = await create_browser(playwright)
-                            subs = await discover_subcategories(page, category_name, category_url)
+                            subs = await discover_all_subcategories(
+                                page, category_name, category_url
+                            )
                             if subs:
-                                print(f"发现 {len(subs)} 个子类目：{category_name}")
+                                print(
+                                    f"发现 {len(subs)} 个子类目（含多级）：{category_name}"
+                                )
                                 targets.extend(subs)
                             break
                         except Exception as exc:
