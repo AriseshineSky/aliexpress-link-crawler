@@ -68,6 +68,13 @@ TRANSIENT_NET_ERROR_MARKERS = (
     "net::ERR_TIMED_OUT",
     "net::ERR_HTTP2_PROTOCOL_ERROR",
 )
+FRAME_TRANSIENT_ERROR_MARKERS = (
+    "Frame was detached",
+    "frame was detached",
+    "Execution context was destroyed",
+    "Cannot find context with specified id",
+    "Frame.querySelector",
+)
 
 
 def site_base_from_url(url: str) -> str:
@@ -271,6 +278,11 @@ def is_browser_dead(exc: BaseException) -> bool:
 def is_transient_network_error(exc: BaseException) -> bool:
     message = str(exc)
     return any(marker in message for marker in TRANSIENT_NET_ERROR_MARKERS)
+
+
+def is_transient_frame_error(exc: BaseException) -> bool:
+    message = str(exc)
+    return any(marker in message for marker in FRAME_TRANSIENT_ERROR_MARKERS)
 
 
 def _parse_json_body(text: str) -> dict | None:
@@ -570,11 +582,19 @@ async def drag_slider_if_present(page: Page) -> bool:
     if page.is_closed():
         return False
     selector = "#nc_1_n1z"
-    for frame in page.frames:
+    for frame in list(page.frames):
         try:
             slider = await frame.query_selector(selector)
-            if not slider:
+        except Exception as exc:
+            if is_browser_dead(exc):
+                raise
+            if is_transient_frame_error(exc):
                 continue
+            print(f"查找滑块时跳过异常 frame: {exc}")
+            continue
+        if not slider:
+            continue
+        try:
             await slider.scroll_into_view_if_needed(timeout=5000)
             box = await slider.bounding_box()
             if not box:
@@ -614,8 +634,10 @@ async def drag_slider_if_present(page: Page) -> bool:
         except Exception as exc:
             if is_browser_dead(exc):
                 raise
+            if is_transient_frame_error(exc):
+                continue
             print(f"拖动滑块失败，继续等待手动验证: {exc}")
-            return False
+            continue
     return False
 
 
