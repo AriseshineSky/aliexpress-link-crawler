@@ -1,53 +1,25 @@
 # AliExpress category URLs (.us + .com)
 # Sort by orders to prioritize high-volume products.
+#
+# Levels:
+#   L1  US / Category
+#   L2  US / Category > Subcategory
+#   L3  US / Category > Subcategory > Leaf
+#
+# Entries with two ' > ' separators skip auto subcategory discovery (L3 seeds).
+# L1/L2 entries still auto-discover deeper categories up to MAX_SUBCATEGORY_DEPTH.
 categories:
-  - name: US / Automotive
-    url: https://www.aliexpress.us/category/34/automobiles-motorcycles.html?SortType=total_tranpro_desc
-
-  - name: COM / Automotive
-    url: https://www.aliexpress.com/category/34/automobiles-motorcycles.html?SortType=total_tranpro_desc
-
-  - name: US / Toys & Games
-    url: https://www.aliexpress.us/category/26/toys-hobbies.html?SortType=total_tranpro_desc
-
-  - name: COM / Toys & Games
-    url: https://www.aliexpress.com/category/26/toys-hobbies.html?SortType=total_tranpro_desc
-
-  - name: US / Beauty & Health
-    url: https://www.aliexpress.us/category/66/beauty-health.html?SortType=total_tranpro_desc
-
-  - name: COM / Beauty & Health
-    url: https://www.aliexpress.com/category/66/beauty-health.html?SortType=total_tranpro_desc
-
-  - name: US / Jewelry & Accessories
-    url: https://www.aliexpress.us/category/1509/jewelry.html?SortType=total_tranpro_desc
-
-  - name: COM / Jewelry & Accessories
-    url: https://www.aliexpress.com/category/1509/jewelry.html?SortType=total_tranpro_desc
-
-  - name: US / Hair Extensions & Wigs
-    url: https://www.aliexpress.us/category/200001075/hair-extensions-wigs.html?SortType=total_tranpro_desc
-
-  - name: COM / Hair Extensions & Wigs
-    url: https://www.aliexpress.com/category/200001075/hair-extensions-wigs.html?SortType=total_tranpro_desc
-
   - name: US / Pet Supplies
     url: https://www.aliexpress.us/category/100006664/pet-products.html?SortType=total_tranpro_desc
 
   - name: COM / Pet Supplies
     url: https://www.aliexpress.com/category/100006664/pet-products.html?SortType=total_tranpro_desc
 
-  - name: US / Cell Phones & Accessories
-    url: https://www.aliexpress.us/category/509/cellphones-telecommunications.html?SortType=total_tranpro_desc
+  - name: US / Tools & Home Improvement
+    url: https://www.aliexpress.us/category/13/construction-real-estate.html?SortType=total_tranpro_desc
 
-  - name: COM / Cell Phones & Accessories
-    url: https://www.aliexpress.com/category/509/cellphones-telecommunications.html?SortType=total_tranpro_desc
-
-  - name: US / Electronics
-    url: https://www.aliexpress.us/category/44/consumer-electronics.html?SortType=total_tranpro_desc
-
-  - name: COM / Electronics
-    url: https://www.aliexpress.com/category/44/consumer-electronics.html?SortType=total_tranpro_desc
+  - name: COM / Tools & Home Improvement
+    url: https://www.aliexpress.com/category/13/construction-real-estate.html?SortType=total_tranpro_desc
 
   - name: US / Patio, Lawn & Garden
     url: https://www.aliexpress.us/category/15/home-garden.html?SortType=total_tranpro_desc
@@ -55,17 +27,35 @@ categories:
   - name: COM / Patio, Lawn & Garden
     url: https://www.aliexpress.com/category/15/home-garden.html?SortType=total_tranpro_desc
 
-  - name: US / Tools & Home Improvement
-    url: https://www.aliexpress.us/category/13/home-improvement.html?SortType=total_tranpro_desc
+  - name: US / Baby & Maternity
+    url: https://www.aliexpress.us/category/1501/baby-products.html?SortType=total_tranpro_desc
 
-  - name: COM / Tools & Home Improvement
-    url: https://www.aliexpress.com/category/13/home-improvement.html?SortType=total_tranpro_desc
+  - name: COM / Baby & Maternity
+    url: https://www.aliexpress.com/category/1501/baby-products.html?SortType=total_tranpro_desc
 
-  - name: US / Sports & Outdoors
-    url: https://www.aliexpress.us/category/18/sports-entertainment.html?SortType=total_tranpro_desc
+  - name: US / Furniture
+    url: https://www.aliexpress.us/category/1503/furniture.html?SortType=total_tranpro_desc
 
-  - name: COM / Sports & Outdoors
-    url: https://www.aliexpress.com/category/18/sports-entertainment.html?SortType=total_tranpro_desc
+  - name: COM / Furniture
+    url: https://www.aliexpress.com/category/1503/furniture.html?SortType=total_tranpro_desc
+
+  - name: US / Jewelry & Accessories
+    url: https://www.aliexpress.us/category/1509/jewelry.html?SortType=total_tranpro_desc
+
+  - name: COM / Jewelry & Accessories
+    url: https://www.aliexpress.com/category/1509/jewelry.html?SortType=total_tranpro_desc
+
+  - name: US / Watches
+    url: https://www.aliexpress.us/category/1511/watches.html?SortType=total_tranpro_desc
+
+  - name: COM / Watches
+    url: https://www.aliexpress.com/category/1511/watches.html?SortType=total_tranpro_desc
+
+  - name: US / Luggage & Bags
+    url: https://www.aliexpress.us/category/1524/luggage-bags.html?SortType=total_tranpro_desc
+
+  - name: COM / Luggage & Bags
+    url: https://www.aliexpress.com/category/1524/luggage-bags.html?SortType=total_tranpro_desc
 
   - name: US / Arts, Crafts & Sewing
     url: https://www.aliexpress.us/category/17/gifts-crafts.html?SortType=total_tranpro_desc
@@ -73,8 +63,1676 @@ categories:
   - name: COM / Arts, Crafts & Sewing
     url: https://www.aliexpress.com/category/17/gifts-crafts.html?SortType=total_tranpro_desc
 
+  - name: US / Sports & Outdoors
+    url: https://www.aliexpress.us/category/18/sports-entertainment.html?SortType=total_tranpro_desc
+
+  - name: COM / Sports & Outdoors
+    url: https://www.aliexpress.com/category/18/sports-entertainment.html?SortType=total_tranpro_desc
+
+  - name: US / Food
+    url: https://www.aliexpress.us/category/2/food.html?SortType=total_tranpro_desc
+
+  - name: COM / Food
+    url: https://www.aliexpress.com/category/2/food.html?SortType=total_tranpro_desc
+
+  - name: US / Hair Extensions & Wigs
+    url: https://www.aliexpress.us/category/200001075/hair-extensions-wigs.html?SortType=total_tranpro_desc
+
+  - name: COM / Hair Extensions & Wigs
+    url: https://www.aliexpress.com/category/200001075/hair-extensions-wigs.html?SortType=total_tranpro_desc
+
+  - name: US / Industrial & Business
+    url: https://www.aliexpress.us/category/200003590/industry-business.html?SortType=total_tranpro_desc
+
+  - name: COM / Industrial & Business
+    url: https://www.aliexpress.com/category/200003590/industry-business.html?SortType=total_tranpro_desc
+
   - name: US / Office & School Supplies
     url: https://www.aliexpress.us/category/21/office-school-supplies.html?SortType=total_tranpro_desc
 
   - name: COM / Office & School Supplies
     url: https://www.aliexpress.com/category/21/office-school-supplies.html?SortType=total_tranpro_desc
+
+  - name: US / Toys & Games
+    url: https://www.aliexpress.us/category/26/Toys-Hobbies.html?SortType=total_tranpro_desc
+
+  - name: COM / Toys & Games
+    url: https://www.aliexpress.com/category/26/Toys-Hobbies.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories
+    url: https://www.aliexpress.us/category/3/apparel-accessories.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories
+    url: https://www.aliexpress.com/category/3/apparel-accessories.html?SortType=total_tranpro_desc
+
+  - name: US / Shoes
+    url: https://www.aliexpress.us/category/322/Shoes.html?SortType=total_tranpro_desc
+
+  - name: COM / Shoes
+    url: https://www.aliexpress.com/category/322/Shoes.html?SortType=total_tranpro_desc
+
+  - name: US / Automotive
+    url: https://www.aliexpress.us/category/34/automobiles-motorcycles.html?SortType=total_tranpro_desc
+
+  - name: COM / Automotive
+    url: https://www.aliexpress.com/category/34/automobiles-motorcycles.html?SortType=total_tranpro_desc
+
+  - name: US / Lights & Lighting
+    url: https://www.aliexpress.us/category/39/Lights_Lighting.html?SortType=total_tranpro_desc
+
+  - name: COM / Lights & Lighting
+    url: https://www.aliexpress.com/category/39/Lights_Lighting.html?SortType=total_tranpro_desc
+
+  - name: US / Electronics
+    url: https://www.aliexpress.us/category/44/consumer-electronics.html?SortType=total_tranpro_desc
+
+  - name: COM / Electronics
+    url: https://www.aliexpress.com/category/44/consumer-electronics.html?SortType=total_tranpro_desc
+
+  - name: US / Electrical Equipment & Supplies
+    url: https://www.aliexpress.us/category/5/electrical-equipment-supplies.html?SortType=total_tranpro_desc
+
+  - name: COM / Electrical Equipment & Supplies
+    url: https://www.aliexpress.com/category/5/electrical-equipment-supplies.html?SortType=total_tranpro_desc
+
+  - name: US / Electronic Components & Supplies
+    url: https://www.aliexpress.us/category/502/electronic-components-supplies.html?SortType=total_tranpro_desc
+
+  - name: COM / Electronic Components & Supplies
+    url: https://www.aliexpress.com/category/502/electronic-components-supplies.html?SortType=total_tranpro_desc
+
+  - name: US / Cell Phones & Accessories
+    url: https://www.aliexpress.us/category/509/Phones-Telecommunications.html?SortType=total_tranpro_desc
+
+  - name: COM / Cell Phones & Accessories
+    url: https://www.aliexpress.com/category/509/Phones-Telecommunications.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances
+    url: https://www.aliexpress.us/category/6/home-appliances.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances
+    url: https://www.aliexpress.com/category/6/home-appliances.html?SortType=total_tranpro_desc
+
+  - name: US / Beauty & Health
+    url: https://www.aliexpress.us/category/66/beauty-amp--personal-care.html?SortType=total_tranpro_desc
+
+  - name: COM / Beauty & Health
+    url: https://www.aliexpress.com/category/66/beauty-amp--personal-care.html?SortType=total_tranpro_desc
+
+  - name: US / Computer & Office
+    url: https://www.aliexpress.us/category/7/computer-hardware-amp--software.html?SortType=total_tranpro_desc
+
+  - name: COM / Computer & Office
+    url: https://www.aliexpress.com/category/7/computer-hardware-amp--software.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Women
+    url: https://www.aliexpress.us/category/100003109/women.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Women
+    url: https://www.aliexpress.com/category/100003109/women.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Men
+    url: https://www.aliexpress.us/category/100003070/men.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Men
+    url: https://www.aliexpress.com/category/100003070/men.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Girls
+    url: https://www.aliexpress.us/category/100003199/girls.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Girls
+    url: https://www.aliexpress.com/category/100003199/girls.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Boys
+    url: https://www.aliexpress.us/category/100003186/boys.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Boys
+    url: https://www.aliexpress.com/category/100003186/boys.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Baby Girls
+    url: https://www.aliexpress.us/category/200000567/baby-girls.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Baby Girls
+    url: https://www.aliexpress.com/category/200000567/baby-girls.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Baby Boys
+    url: https://www.aliexpress.us/category/200000528/baby-boys.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Baby Boys
+    url: https://www.aliexpress.com/category/200000528/baby-boys.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Weddings & Events
+    url: https://www.aliexpress.us/category/100003235/weddings-events.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Weddings & Events
+    url: https://www.aliexpress.com/category/100003235/weddings-events.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Novelty & Special Use
+    url: https://www.aliexpress.us/category/200000875/novelty-special-use.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Novelty & Special Use
+    url: https://www.aliexpress.com/category/200000875/novelty-special-use.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Sewing Supplies
+    url: https://www.aliexpress.us/category/353/sewing-supplies.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Sewing Supplies
+    url: https://www.aliexpress.com/category/353/sewing-supplies.html?SortType=total_tranpro_desc
+
+  - name: US / Baby & Maternity > Baby Shoes
+    url: https://www.aliexpress.us/category/200002101/baby-shoes.html?SortType=total_tranpro_desc
+
+  - name: COM / Baby & Maternity > Baby Shoes
+    url: https://www.aliexpress.com/category/200002101/baby-shoes.html?SortType=total_tranpro_desc
+
+  - name: US / Baby & Maternity > Feeding
+    url: https://www.aliexpress.us/category/200003595/feeding.html?SortType=total_tranpro_desc
+
+  - name: COM / Baby & Maternity > Feeding
+    url: https://www.aliexpress.com/category/200003595/feeding.html?SortType=total_tranpro_desc
+
+  - name: US / Baby & Maternity > Baby Care
+    url: https://www.aliexpress.us/category/100001118/baby-care.html?SortType=total_tranpro_desc
+
+  - name: COM / Baby & Maternity > Baby Care
+    url: https://www.aliexpress.com/category/100001118/baby-care.html?SortType=total_tranpro_desc
+
+  - name: US / Baby & Maternity > Bedding
+    url: https://www.aliexpress.us/category/100002964/bedding.html?SortType=total_tranpro_desc
+
+  - name: COM / Baby & Maternity > Bedding
+    url: https://www.aliexpress.com/category/100002964/bedding.html?SortType=total_tranpro_desc
+
+  - name: US / Baby & Maternity > Activity & Gear
+    url: https://www.aliexpress.us/category/200003594/activity-gear.html?SortType=total_tranpro_desc
+
+  - name: COM / Baby & Maternity > Activity & Gear
+    url: https://www.aliexpress.com/category/200003594/activity-gear.html?SortType=total_tranpro_desc
+
+  - name: US / Baby & Maternity > Baby Toys
+    url: https://www.aliexpress.us/category/100001622/baby-toys.html?SortType=total_tranpro_desc
+
+  - name: COM / Baby & Maternity > Baby Toys
+    url: https://www.aliexpress.com/category/100001622/baby-toys.html?SortType=total_tranpro_desc
+
+  - name: US / Baby & Maternity > Safety
+    url: https://www.aliexpress.us/category/200003592/safety.html?SortType=total_tranpro_desc
+
+  - name: COM / Baby & Maternity > Safety
+    url: https://www.aliexpress.com/category/200003592/safety.html?SortType=total_tranpro_desc
+
+  - name: US / Baby & Maternity > Clothing
+    url: https://www.aliexpress.us/category/200003687/clothing.html?SortType=total_tranpro_desc
+
+  - name: COM / Baby & Maternity > Clothing
+    url: https://www.aliexpress.com/category/200003687/clothing.html?SortType=total_tranpro_desc
+
+  - name: US / Computer & Office > Computer Components
+    url: https://www.aliexpress.us/category/200002319/computer-components.html?SortType=total_tranpro_desc
+
+  - name: COM / Computer & Office > Computer Components
+    url: https://www.aliexpress.com/category/200002319/computer-components.html?SortType=total_tranpro_desc
+
+  - name: US / Computer & Office > Cables & Interconnects Accessories
+    url: https://www.aliexpress.us/category/200002323/cables-interconnects-accessories.html?SortType=total_tranpro_desc
+
+  - name: COM / Computer & Office > Cables & Interconnects Accessories
+    url: https://www.aliexpress.com/category/200002323/cables-interconnects-accessories.html?SortType=total_tranpro_desc
+
+  - name: US / Computer & Office > Tablet Accessories
+    url: https://www.aliexpress.us/category/200002361/tablet-accessories.html?SortType=total_tranpro_desc
+
+  - name: COM / Computer & Office > Tablet Accessories
+    url: https://www.aliexpress.com/category/200002361/tablet-accessories.html?SortType=total_tranpro_desc
+
+  - name: US / Computer & Office > Computer Peripherals
+    url: https://www.aliexpress.us/category/200002342/computer-peripherals.html?SortType=total_tranpro_desc
+
+  - name: COM / Computer & Office > Computer Peripherals
+    url: https://www.aliexpress.com/category/200002342/computer-peripherals.html?SortType=total_tranpro_desc
+
+  - name: US / Computer & Office > Storage Devices
+    url: https://www.aliexpress.us/category/200002321/storage-devices.html?SortType=total_tranpro_desc
+
+  - name: COM / Computer & Office > Storage Devices
+    url: https://www.aliexpress.com/category/200002321/storage-devices.html?SortType=total_tranpro_desc
+
+  - name: US / Computer & Office > Laptop Accessories
+    url: https://www.aliexpress.us/category/100005063/laptop-accessories.html?SortType=total_tranpro_desc
+
+  - name: COM / Computer & Office > Laptop Accessories
+    url: https://www.aliexpress.com/category/100005063/laptop-accessories.html?SortType=total_tranpro_desc
+
+  - name: US / Computer & Office > Computer Cleaning & Repair
+    url: https://www.aliexpress.us/category/200004378/computer-cleaning-repair.html?SortType=total_tranpro_desc
+
+  - name: COM / Computer & Office > Computer Cleaning & Repair
+    url: https://www.aliexpress.com/category/200004378/computer-cleaning-repair.html?SortType=total_tranpro_desc
+
+  - name: US / Computer & Office > Other Computer Products
+    url: https://www.aliexpress.us/category/717/other-computer-products.html?SortType=total_tranpro_desc
+
+  - name: COM / Computer & Office > Other Computer Products
+    url: https://www.aliexpress.com/category/717/other-computer-products.html?SortType=total_tranpro_desc
+
+  - name: US / Computer & Office > Tablet PCs
+    url: https://www.aliexpress.us/category/100005062/tablet-pcs.html?SortType=total_tranpro_desc
+
+  - name: COM / Computer & Office > Tablet PCs
+    url: https://www.aliexpress.com/category/100005062/tablet-pcs.html?SortType=total_tranpro_desc
+
+  - name: US / Computer & Office > Desktops & Servers
+    url: https://www.aliexpress.us/category/200002318/desktops-servers.html?SortType=total_tranpro_desc
+
+  - name: COM / Computer & Office > Desktops & Servers
+    url: https://www.aliexpress.com/category/200002318/desktops-servers.html?SortType=total_tranpro_desc
+
+  - name: US / Computer & Office > Networking
+    url: https://www.aliexpress.us/category/200002320/networking.html?SortType=total_tranpro_desc
+
+  - name: COM / Computer & Office > Networking
+    url: https://www.aliexpress.com/category/200002320/networking.html?SortType=total_tranpro_desc
+
+  - name: US / Computer & Office > Mini PCs
+    url: https://www.aliexpress.us/category/70803003/mini-pcs.html?SortType=total_tranpro_desc
+
+  - name: COM / Computer & Office > Mini PCs
+    url: https://www.aliexpress.com/category/70803003/mini-pcs.html?SortType=total_tranpro_desc
+
+  - name: US / Computer & Office > Laptops
+    url: https://www.aliexpress.us/category/702/laptops.html?SortType=total_tranpro_desc
+
+  - name: COM / Computer & Office > Laptops
+    url: https://www.aliexpress.com/category/702/laptops.html?SortType=total_tranpro_desc
+
+  - name: US / Computer & Office > Netbooks & UMPC
+    url: https://www.aliexpress.us/category/100005061/netbooks-umpc.html?SortType=total_tranpro_desc
+
+  - name: COM / Computer & Office > Netbooks & UMPC
+    url: https://www.aliexpress.com/category/100005061/netbooks-umpc.html?SortType=total_tranpro_desc
+
+  - name: US / Computer & Office > Software
+    url: https://www.aliexpress.us/category/712/software.html?SortType=total_tranpro_desc
+
+  - name: COM / Computer & Office > Software
+    url: https://www.aliexpress.com/category/712/software.html?SortType=total_tranpro_desc
+
+  - name: US / Electrical Equipment & Supplies > Batteries
+    url: https://www.aliexpress.us/category/528/batteries.html?SortType=total_tranpro_desc
+
+  - name: COM / Electrical Equipment & Supplies > Batteries
+    url: https://www.aliexpress.com/category/528/batteries.html?SortType=total_tranpro_desc
+
+  - name: US / Electrical Equipment & Supplies > Connectors & Terminals
+    url: https://www.aliexpress.us/category/14190406/connectors-terminals.html?SortType=total_tranpro_desc
+
+  - name: COM / Electrical Equipment & Supplies > Connectors & Terminals
+    url: https://www.aliexpress.com/category/14190406/connectors-terminals.html?SortType=total_tranpro_desc
+
+  - name: US / Electrical Equipment & Supplies > Wires, Cables & Cable Assemblies
+    url: https://www.aliexpress.us/category/141904/wires-cables-cable-assemblies.html?SortType=total_tranpro_desc
+
+  - name: COM / Electrical Equipment & Supplies > Wires, Cables & Cable Assemblies
+    url: https://www.aliexpress.com/category/141904/wires-cables-cable-assemblies.html?SortType=total_tranpro_desc
+
+  - name: US / Electrical Equipment & Supplies > Power Tools
+    url: https://www.aliexpress.us/category/1417/power-tools.html?SortType=total_tranpro_desc
+
+  - name: COM / Electrical Equipment & Supplies > Power Tools
+    url: https://www.aliexpress.com/category/1417/power-tools.html?SortType=total_tranpro_desc
+
+  - name: US / Electrical Equipment & Supplies > Wiring Accessories
+    url: https://www.aliexpress.us/category/14190403/wiring-accessories.html?SortType=total_tranpro_desc
+
+  - name: COM / Electrical Equipment & Supplies > Wiring Accessories
+    url: https://www.aliexpress.com/category/14190403/wiring-accessories.html?SortType=total_tranpro_desc
+
+  - name: US / Electrical Equipment & Supplies > Switches
+    url: https://www.aliexpress.us/category/141906/switches.html?SortType=total_tranpro_desc
+
+  - name: COM / Electrical Equipment & Supplies > Switches
+    url: https://www.aliexpress.com/category/141906/switches.html?SortType=total_tranpro_desc
+
+  - name: US / Electrical Equipment & Supplies > Power Supplies
+    url: https://www.aliexpress.us/category/141911/power-supplies.html?SortType=total_tranpro_desc
+
+  - name: COM / Electrical Equipment & Supplies > Power Supplies
+    url: https://www.aliexpress.com/category/141911/power-supplies.html?SortType=total_tranpro_desc
+
+  - name: US / Electrical Equipment & Supplies > Relays
+    url: https://www.aliexpress.us/category/141909/relays.html?SortType=total_tranpro_desc
+
+  - name: COM / Electrical Equipment & Supplies > Relays
+    url: https://www.aliexpress.com/category/141909/relays.html?SortType=total_tranpro_desc
+
+  - name: US / Electrical Equipment & Supplies > Electrical Plugs & Sockets
+    url: https://www.aliexpress.us/category/141905/electrical-plugs-sockets.html?SortType=total_tranpro_desc
+
+  - name: COM / Electrical Equipment & Supplies > Electrical Plugs & Sockets
+    url: https://www.aliexpress.com/category/141905/electrical-plugs-sockets.html?SortType=total_tranpro_desc
+
+  - name: US / Electrical Equipment & Supplies > Fuses
+    url: https://www.aliexpress.us/category/540/fuses.html?SortType=total_tranpro_desc
+
+  - name: COM / Electrical Equipment & Supplies > Fuses
+    url: https://www.aliexpress.com/category/540/fuses.html?SortType=total_tranpro_desc
+
+  - name: US / Electrical Equipment & Supplies > Other Electrical Equipment
+    url: https://www.aliexpress.us/category/516/other-electrical-equipment.html?SortType=total_tranpro_desc
+
+  - name: COM / Electrical Equipment & Supplies > Other Electrical Equipment
+    url: https://www.aliexpress.com/category/516/other-electrical-equipment.html?SortType=total_tranpro_desc
+
+  - name: US / Electrical Equipment & Supplies > Transformers
+    url: https://www.aliexpress.us/category/141907/transformers.html?SortType=total_tranpro_desc
+
+  - name: COM / Electrical Equipment & Supplies > Transformers
+    url: https://www.aliexpress.com/category/141907/transformers.html?SortType=total_tranpro_desc
+
+  - name: US / Electrical Equipment & Supplies > Contactors
+    url: https://www.aliexpress.us/category/526/contactors.html?SortType=total_tranpro_desc
+
+  - name: COM / Electrical Equipment & Supplies > Contactors
+    url: https://www.aliexpress.com/category/526/contactors.html?SortType=total_tranpro_desc
+
+  - name: US / Electrical Equipment & Supplies > Circuit Breakers
+    url: https://www.aliexpress.us/category/141914/circuit-breakers.html?SortType=total_tranpro_desc
+
+  - name: COM / Electrical Equipment & Supplies > Circuit Breakers
+    url: https://www.aliexpress.com/category/141914/circuit-breakers.html?SortType=total_tranpro_desc
+
+  - name: US / Electrical Equipment & Supplies > Power Accessories
+    url: https://www.aliexpress.us/category/141913/power-accessories.html?SortType=total_tranpro_desc
+
+  - name: COM / Electrical Equipment & Supplies > Power Accessories
+    url: https://www.aliexpress.com/category/141913/power-accessories.html?SortType=total_tranpro_desc
+
+  - name: US / Electrical Equipment & Supplies > Electronic & Instrument Enclosures
+    url: https://www.aliexpress.us/category/150512/electronic-instrument-enclosures.html?SortType=total_tranpro_desc
+
+  - name: COM / Electrical Equipment & Supplies > Electronic & Instrument Enclosures
+    url: https://www.aliexpress.com/category/150512/electronic-instrument-enclosures.html?SortType=total_tranpro_desc
+
+  - name: US / Electrical Equipment & Supplies > Generators
+    url: https://www.aliexpress.us/category/141902/generators.html?SortType=total_tranpro_desc
+
+  - name: COM / Electrical Equipment & Supplies > Generators
+    url: https://www.aliexpress.com/category/141902/generators.html?SortType=total_tranpro_desc
+
+  - name: US / Electrical Equipment & Supplies > Insulation Materials & Elements
+    url: https://www.aliexpress.us/category/141903/insulation-materials-elements.html?SortType=total_tranpro_desc
+
+  - name: COM / Electrical Equipment & Supplies > Insulation Materials & Elements
+    url: https://www.aliexpress.com/category/141903/insulation-materials-elements.html?SortType=total_tranpro_desc
+
+  - name: US / Electrical Equipment & Supplies > Professional Audio, Video & Lighting
+    url: https://www.aliexpress.us/category/527/professional-audio-video-lighting.html?SortType=total_tranpro_desc
+
+  - name: COM / Electrical Equipment & Supplies > Professional Audio, Video & Lighting
+    url: https://www.aliexpress.com/category/527/professional-audio-video-lighting.html?SortType=total_tranpro_desc
+
+  - name: US / Electrical Equipment & Supplies > Fuse Components
+    url: https://www.aliexpress.us/category/4103/fuse-components.html?SortType=total_tranpro_desc
+
+  - name: COM / Electrical Equipment & Supplies > Fuse Components
+    url: https://www.aliexpress.com/category/4103/fuse-components.html?SortType=total_tranpro_desc
+
+  - name: US / Electrical Equipment & Supplies > Power Distribution Equipment
+    url: https://www.aliexpress.us/category/4105/power-distribution-equipment.html?SortType=total_tranpro_desc
+
+  - name: COM / Electrical Equipment & Supplies > Power Distribution Equipment
+    url: https://www.aliexpress.com/category/4105/power-distribution-equipment.html?SortType=total_tranpro_desc
+
+  - name: US / Electrical Equipment & Supplies > Electrical Ceramics
+    url: https://www.aliexpress.us/category/400301/electrical-ceramics.html?SortType=total_tranpro_desc
+
+  - name: COM / Electrical Equipment & Supplies > Electrical Ceramics
+    url: https://www.aliexpress.com/category/400301/electrical-ceramics.html?SortType=total_tranpro_desc
+
+  - name: US / Electronic Components & Supplies > Active Components
+    url: https://www.aliexpress.us/category/4001/active-components.html?SortType=total_tranpro_desc
+
+  - name: COM / Electronic Components & Supplies > Active Components
+    url: https://www.aliexpress.com/category/4001/active-components.html?SortType=total_tranpro_desc
+
+  - name: US / Electronic Components & Supplies > Other Electronic Components
+    url: https://www.aliexpress.us/category/4099/other-electronic-components.html?SortType=total_tranpro_desc
+
+  - name: COM / Electronic Components & Supplies > Other Electronic Components
+    url: https://www.aliexpress.com/category/4099/other-electronic-components.html?SortType=total_tranpro_desc
+
+  - name: US / Electronic Components & Supplies > Electronic Accessories & Supplies
+    url: https://www.aliexpress.us/category/4003/electronic-accessories-supplies.html?SortType=total_tranpro_desc
+
+  - name: COM / Electronic Components & Supplies > Electronic Accessories & Supplies
+    url: https://www.aliexpress.com/category/4003/electronic-accessories-supplies.html?SortType=total_tranpro_desc
+
+  - name: US / Electronic Components & Supplies > Passive Components
+    url: https://www.aliexpress.us/category/4005/passive-components.html?SortType=total_tranpro_desc
+
+  - name: COM / Electronic Components & Supplies > Passive Components
+    url: https://www.aliexpress.com/category/4005/passive-components.html?SortType=total_tranpro_desc
+
+  - name: US / Electronic Components & Supplies > Electronic Data Systems
+    url: https://www.aliexpress.us/category/504/electronic-data-systems.html?SortType=total_tranpro_desc
+
+  - name: COM / Electronic Components & Supplies > Electronic Data Systems
+    url: https://www.aliexpress.com/category/504/electronic-data-systems.html?SortType=total_tranpro_desc
+
+  - name: US / Electronic Components & Supplies > Electronics Production Machinery
+    url: https://www.aliexpress.us/category/4002/electronics-production-machinery.html?SortType=total_tranpro_desc
+
+  - name: COM / Electronic Components & Supplies > Electronics Production Machinery
+    url: https://www.aliexpress.com/category/4002/electronics-production-machinery.html?SortType=total_tranpro_desc
+
+  - name: US / Electronic Components & Supplies > Electronics Stocks
+    url: https://www.aliexpress.us/category/515/electronics-stocks.html?SortType=total_tranpro_desc
+
+  - name: COM / Electronic Components & Supplies > Electronics Stocks
+    url: https://www.aliexpress.com/category/515/electronics-stocks.html?SortType=total_tranpro_desc
+
+  - name: US / Electronic Components & Supplies > Optoelectronic Displays
+    url: https://www.aliexpress.us/category/4004/optoelectronic-displays.html?SortType=total_tranpro_desc
+
+  - name: COM / Electronic Components & Supplies > Optoelectronic Displays
+    url: https://www.aliexpress.com/category/4004/optoelectronic-displays.html?SortType=total_tranpro_desc
+
+  - name: US / Electronic Components & Supplies > Electronic Signs
+    url: https://www.aliexpress.us/category/150407/electronic-signs.html?SortType=total_tranpro_desc
+
+  - name: COM / Electronic Components & Supplies > Electronic Signs
+    url: https://www.aliexpress.com/category/150407/electronic-signs.html?SortType=total_tranpro_desc
+
+  - name: US / Electronic Components & Supplies > EL Products
+    url: https://www.aliexpress.us/category/150412/el-products.html?SortType=total_tranpro_desc
+
+  - name: COM / Electronic Components & Supplies > EL Products
+    url: https://www.aliexpress.com/category/150412/el-products.html?SortType=total_tranpro_desc
+
+  - name: US / Furniture > Home Furniture
+    url: https://www.aliexpress.us/category/150303/home-furniture.html?SortType=total_tranpro_desc
+
+  - name: COM / Furniture > Home Furniture
+    url: https://www.aliexpress.com/category/150303/home-furniture.html?SortType=total_tranpro_desc
+
+  - name: US / Furniture > Furniture Hardware
+    url: https://www.aliexpress.us/category/150306/furniture-hardware.html?SortType=total_tranpro_desc
+
+  - name: COM / Furniture > Furniture Hardware
+    url: https://www.aliexpress.com/category/150306/furniture-hardware.html?SortType=total_tranpro_desc
+
+  - name: US / Furniture > Commercial Furniture
+    url: https://www.aliexpress.us/category/150301/commercial-furniture.html?SortType=total_tranpro_desc
+
+  - name: COM / Furniture > Commercial Furniture
+    url: https://www.aliexpress.com/category/150301/commercial-furniture.html?SortType=total_tranpro_desc
+
+  - name: US / Furniture > Furniture Making Machinery
+    url: https://www.aliexpress.us/category/3709/furniture-making-machinery.html?SortType=total_tranpro_desc
+
+  - name: COM / Furniture > Furniture Making Machinery
+    url: https://www.aliexpress.com/category/3709/furniture-making-machinery.html?SortType=total_tranpro_desc
+
+  - name: US / Furniture > Outdoor Furniture
+    url: https://www.aliexpress.us/category/150302/outdoor-furniture.html?SortType=total_tranpro_desc
+
+  - name: COM / Furniture > Outdoor Furniture
+    url: https://www.aliexpress.com/category/150302/outdoor-furniture.html?SortType=total_tranpro_desc
+
+  - name: US / Furniture > Folding Furniture
+    url: https://www.aliexpress.us/category/100001206/folding-furniture.html?SortType=total_tranpro_desc
+
+  - name: COM / Furniture > Folding Furniture
+    url: https://www.aliexpress.com/category/100001206/folding-furniture.html?SortType=total_tranpro_desc
+
+  - name: US / Furniture > Wood Furniture
+    url: https://www.aliexpress.us/category/100001201/wood-furniture.html?SortType=total_tranpro_desc
+
+  - name: COM / Furniture > Wood Furniture
+    url: https://www.aliexpress.com/category/100001201/wood-furniture.html?SortType=total_tranpro_desc
+
+  - name: US / Furniture > Children Furniture
+    url: https://www.aliexpress.us/category/100001203/children-furniture.html?SortType=total_tranpro_desc
+
+  - name: COM / Furniture > Children Furniture
+    url: https://www.aliexpress.com/category/100001203/children-furniture.html?SortType=total_tranpro_desc
+
+  - name: US / Furniture > Office Furniture
+    url: https://www.aliexpress.us/category/150304/office-furniture.html?SortType=total_tranpro_desc
+
+  - name: COM / Furniture > Office Furniture
+    url: https://www.aliexpress.com/category/150304/office-furniture.html?SortType=total_tranpro_desc
+
+  - name: US / Furniture > Metal Furniture
+    url: https://www.aliexpress.us/category/100001198/metal-furniture.html?SortType=total_tranpro_desc
+
+  - name: COM / Furniture > Metal Furniture
+    url: https://www.aliexpress.com/category/100001198/metal-furniture.html?SortType=total_tranpro_desc
+
+  - name: US / Furniture > Plastic Furniture
+    url: https://www.aliexpress.us/category/100001199/plastic-furniture.html?SortType=total_tranpro_desc
+
+  - name: COM / Furniture > Plastic Furniture
+    url: https://www.aliexpress.com/category/100001199/plastic-furniture.html?SortType=total_tranpro_desc
+
+  - name: US / Furniture > Woodworking Adhesives
+    url: https://www.aliexpress.us/category/82207/woodworking-adhesives.html?SortType=total_tranpro_desc
+
+  - name: COM / Furniture > Woodworking Adhesives
+    url: https://www.aliexpress.com/category/82207/woodworking-adhesives.html?SortType=total_tranpro_desc
+
+  - name: US / Furniture > Bamboo Furniture
+    url: https://www.aliexpress.us/category/100001193/bamboo-furniture.html?SortType=total_tranpro_desc
+
+  - name: COM / Furniture > Bamboo Furniture
+    url: https://www.aliexpress.com/category/100001193/bamboo-furniture.html?SortType=total_tranpro_desc
+
+  - name: US / Furniture > Antique Furniture
+    url: https://www.aliexpress.us/category/100001204/antique-furniture.html?SortType=total_tranpro_desc
+
+  - name: COM / Furniture > Antique Furniture
+    url: https://www.aliexpress.com/category/100001204/antique-furniture.html?SortType=total_tranpro_desc
+
+  - name: US / Furniture > Rattan / Wicker Furniture
+    url: https://www.aliexpress.us/category/100001200/rattan-wicker-furniture.html?SortType=total_tranpro_desc
+
+  - name: COM / Furniture > Rattan / Wicker Furniture
+    url: https://www.aliexpress.com/category/100001200/rattan-wicker-furniture.html?SortType=total_tranpro_desc
+
+  - name: US / Furniture > Furniture Accessories
+    url: https://www.aliexpress.us/category/3712/furniture-accessories.html?SortType=total_tranpro_desc
+
+  - name: COM / Furniture > Furniture Accessories
+    url: https://www.aliexpress.com/category/3712/furniture-accessories.html?SortType=total_tranpro_desc
+
+  - name: US / Furniture > Other Furniture
+    url: https://www.aliexpress.us/category/150399/other-furniture.html?SortType=total_tranpro_desc
+
+  - name: COM / Furniture > Other Furniture
+    url: https://www.aliexpress.com/category/150399/other-furniture.html?SortType=total_tranpro_desc
+
+  - name: US / Furniture > Furniture Parts
+    url: https://www.aliexpress.us/category/3708/furniture-parts.html?SortType=total_tranpro_desc
+
+  - name: COM / Furniture > Furniture Parts
+    url: https://www.aliexpress.com/category/3708/furniture-parts.html?SortType=total_tranpro_desc
+
+  - name: US / Furniture > Woodworking Machinery Parts
+    url: https://www.aliexpress.us/category/4338/woodworking-machinery-parts.html?SortType=total_tranpro_desc
+
+  - name: COM / Furniture > Woodworking Machinery Parts
+    url: https://www.aliexpress.com/category/4338/woodworking-machinery-parts.html?SortType=total_tranpro_desc
+
+  - name: US / Furniture > Glass Furniture
+    url: https://www.aliexpress.us/category/100001196/glass-furniture.html?SortType=total_tranpro_desc
+
+  - name: COM / Furniture > Glass Furniture
+    url: https://www.aliexpress.com/category/100001196/glass-furniture.html?SortType=total_tranpro_desc
+
+  - name: US / Furniture > Inflatable Furniture
+    url: https://www.aliexpress.us/category/100001205/inflatable-furniture.html?SortType=total_tranpro_desc
+
+  - name: COM / Furniture > Inflatable Furniture
+    url: https://www.aliexpress.com/category/100001205/inflatable-furniture.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Home Appliances Stocks
+    url: https://www.aliexpress.us/category/631/home-appliances-stocks.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Home Appliances Stocks
+    url: https://www.aliexpress.com/category/631/home-appliances-stocks.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Kitchen Appliances
+    url: https://www.aliexpress.us/category/100000011/kitchen-appliances.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Kitchen Appliances
+    url: https://www.aliexpress.com/category/100000011/kitchen-appliances.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Air Conditioning Appliances
+    url: https://www.aliexpress.us/category/100000050/air-conditioning-appliances.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Air Conditioning Appliances
+    url: https://www.aliexpress.com/category/100000050/air-conditioning-appliances.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Home Heaters
+    url: https://www.aliexpress.us/category/100000015/home-heaters.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Home Heaters
+    url: https://www.aliexpress.com/category/100000015/home-heaters.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Home Appliance Parts
+    url: https://www.aliexpress.us/category/100000016/home-appliance-parts.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Home Appliance Parts
+    url: https://www.aliexpress.com/category/100000016/home-appliance-parts.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Cleaning Appliances
+    url: https://www.aliexpress.us/category/100000013/cleaning-appliances.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Cleaning Appliances
+    url: https://www.aliexpress.com/category/100000013/cleaning-appliances.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Other Home Appliances
+    url: https://www.aliexpress.us/category/628/other-home-appliances.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Other Home Appliances
+    url: https://www.aliexpress.com/category/628/other-home-appliances.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Laundry Appliances
+    url: https://www.aliexpress.us/category/100000012/laundry-appliances.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Laundry Appliances
+    url: https://www.aliexpress.com/category/100000012/laundry-appliances.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Water Treatment Appliances
+    url: https://www.aliexpress.us/category/100000014/water-treatment-appliances.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Water Treatment Appliances
+    url: https://www.aliexpress.com/category/100000014/water-treatment-appliances.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Electric Shavers
+    url: https://www.aliexpress.us/category/3314/electric-shavers.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Electric Shavers
+    url: https://www.aliexpress.com/category/3314/electric-shavers.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Wet Towel Dispensers
+    url: https://www.aliexpress.us/category/648/wet-towel-dispensers.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Wet Towel Dispensers
+    url: https://www.aliexpress.com/category/648/wet-towel-dispensers.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Water Heaters
+    url: https://www.aliexpress.us/category/100000054/water-heaters.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Water Heaters
+    url: https://www.aliexpress.com/category/100000054/water-heaters.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Shoe Dryer
+    url: https://www.aliexpress.us/category/100001684/shoe-dryer.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Shoe Dryer
+    url: https://www.aliexpress.com/category/100001684/shoe-dryer.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Refrigerators & Freezers
+    url: https://www.aliexpress.us/category/100000026/refrigerators-freezers.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Refrigerators & Freezers
+    url: https://www.aliexpress.com/category/100000026/refrigerators-freezers.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Hand Dryers
+    url: https://www.aliexpress.us/category/614/hand-dryers.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Hand Dryers
+    url: https://www.aliexpress.com/category/614/hand-dryers.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Shoe Polishing Equipment
+    url: https://www.aliexpress.us/category/100001681/shoe-polishing-equipment.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Shoe Polishing Equipment
+    url: https://www.aliexpress.com/category/100001681/shoe-polishing-equipment.html?SortType=total_tranpro_desc
+
+  - name: US / Industry & Business > Machinery
+    url: https://www.aliexpress.us/category/43/machinery.html?SortType=total_tranpro_desc
+
+  - name: COM / Industry & Business > Machinery
+    url: https://www.aliexpress.com/category/43/machinery.html?SortType=total_tranpro_desc
+
+  - name: US / Industry & Business > Textiles & Leather
+    url: https://www.aliexpress.us/category/4/textiles-leather.html?SortType=total_tranpro_desc
+
+  - name: COM / Industry & Business > Textiles & Leather
+    url: https://www.aliexpress.com/category/4/textiles-leather.html?SortType=total_tranpro_desc
+
+  - name: US / Industry & Business > Packaging & Shipping
+    url: https://www.aliexpress.us/category/23/packaging-shipping.html?SortType=total_tranpro_desc
+
+  - name: COM / Industry & Business > Packaging & Shipping
+    url: https://www.aliexpress.com/category/23/packaging-shipping.html?SortType=total_tranpro_desc
+
+  - name: US / Industry & Business > Measurement & Analysis Instruments
+    url: https://www.aliexpress.us/category/1537/measurement-analysis-instruments.html?SortType=total_tranpro_desc
+
+  - name: COM / Industry & Business > Measurement & Analysis Instruments
+    url: https://www.aliexpress.com/category/1537/measurement-analysis-instruments.html?SortType=total_tranpro_desc
+
+  - name: US / Industry & Business > Mechanical Parts & Fabrication Services
+    url: https://www.aliexpress.us/category/41/mechanical-parts-fabrication-services.html?SortType=total_tranpro_desc
+
+  - name: COM / Industry & Business > Mechanical Parts & Fabrication Services
+    url: https://www.aliexpress.com/category/41/mechanical-parts-fabrication-services.html?SortType=total_tranpro_desc
+
+  - name: US / Industry & Business > Service Equipment
+    url: https://www.aliexpress.us/category/2829/service-equipment.html?SortType=total_tranpro_desc
+
+  - name: COM / Industry & Business > Service Equipment
+    url: https://www.aliexpress.com/category/2829/service-equipment.html?SortType=total_tranpro_desc
+
+  - name: US / Industry & Business > Rubber & Plastics
+    url: https://www.aliexpress.us/category/80/rubber-plastics.html?SortType=total_tranpro_desc
+
+  - name: COM / Industry & Business > Rubber & Plastics
+    url: https://www.aliexpress.com/category/80/rubber-plastics.html?SortType=total_tranpro_desc
+
+  - name: US / Industry & Business > Printing Materials
+    url: https://www.aliexpress.us/category/100004839/printing-materials.html?SortType=total_tranpro_desc
+
+  - name: COM / Industry & Business > Printing Materials
+    url: https://www.aliexpress.com/category/100004839/printing-materials.html?SortType=total_tranpro_desc
+
+  - name: US / Lights & Lighting > Lighting Accessories
+    url: https://www.aliexpress.us/category/530/lighting-accessories.html?SortType=total_tranpro_desc
+
+  - name: COM / Lights & Lighting > Lighting Accessories
+    url: https://www.aliexpress.com/category/530/lighting-accessories.html?SortType=total_tranpro_desc
+
+  - name: US / Lights & Lighting > LED Lamps
+    url: https://www.aliexpress.us/category/200003575/led-lamps.html?SortType=total_tranpro_desc
+
+  - name: COM / Lights & Lighting > LED Lamps
+    url: https://www.aliexpress.com/category/200003575/led-lamps.html?SortType=total_tranpro_desc
+
+  - name: US / Lights & Lighting > Light Bulbs
+    url: https://www.aliexpress.us/category/150402/light-bulbs.html?SortType=total_tranpro_desc
+
+  - name: COM / Lights & Lighting > Light Bulbs
+    url: https://www.aliexpress.com/category/150402/light-bulbs.html?SortType=total_tranpro_desc
+
+  - name: US / Lights & Lighting > LED Lighting
+    url: https://www.aliexpress.us/category/390501/led-lighting.html?SortType=total_tranpro_desc
+
+  - name: COM / Lights & Lighting > LED Lighting
+    url: https://www.aliexpress.com/category/390501/led-lighting.html?SortType=total_tranpro_desc
+
+  - name: US / Lights & Lighting > Indoor Lighting
+    url: https://www.aliexpress.us/category/1504/indoor-lighting.html?SortType=total_tranpro_desc
+
+  - name: COM / Lights & Lighting > Indoor Lighting
+    url: https://www.aliexpress.com/category/1504/indoor-lighting.html?SortType=total_tranpro_desc
+
+  - name: US / Lights & Lighting > Professional Lighting
+    url: https://www.aliexpress.us/category/200003210/professional-lighting.html?SortType=total_tranpro_desc
+
+  - name: COM / Lights & Lighting > Professional Lighting
+    url: https://www.aliexpress.com/category/200003210/professional-lighting.html?SortType=total_tranpro_desc
+
+  - name: US / Lights & Lighting > Portable Lighting
+    url: https://www.aliexpress.us/category/390503/portable-lighting.html?SortType=total_tranpro_desc
+
+  - name: COM / Lights & Lighting > Portable Lighting
+    url: https://www.aliexpress.com/category/390503/portable-lighting.html?SortType=total_tranpro_desc
+
+  - name: US / Lights & Lighting > Holiday  Lighting
+    url: https://www.aliexpress.us/category/200003857/holiday-lighting.html?SortType=total_tranpro_desc
+
+  - name: COM / Lights & Lighting > Holiday  Lighting
+    url: https://www.aliexpress.com/category/200003857/holiday-lighting.html?SortType=total_tranpro_desc
+
+  - name: US / Lights & Lighting > Business Lights
+    url: https://www.aliexpress.us/category/200003009/business-lights.html?SortType=total_tranpro_desc
+
+  - name: COM / Lights & Lighting > Business Lights
+    url: https://www.aliexpress.com/category/200003009/business-lights.html?SortType=total_tranpro_desc
+
+  - name: US / Lights & Lighting > Outdoor Lighting
+    url: https://www.aliexpress.us/category/150401/outdoor-lighting.html?SortType=total_tranpro_desc
+
+  - name: COM / Lights & Lighting > Outdoor Lighting
+    url: https://www.aliexpress.com/category/150401/outdoor-lighting.html?SortType=total_tranpro_desc
+
+  - name: US / Lights & Lighting > Other Lights & Lighting Products
+    url: https://www.aliexpress.us/category/3999/other-lights-lighting-products.html?SortType=total_tranpro_desc
+
+  - name: COM / Lights & Lighting > Other Lights & Lighting Products
+    url: https://www.aliexpress.com/category/3999/other-lights-lighting-products.html?SortType=total_tranpro_desc
+
+  - name: US / Lights & Lighting > Novelty Lighting
+    url: https://www.aliexpress.us/category/200002283/novelty-lighting.html?SortType=total_tranpro_desc
+
+  - name: COM / Lights & Lighting > Novelty Lighting
+    url: https://www.aliexpress.com/category/200002283/novelty-lighting.html?SortType=total_tranpro_desc
+
+  - name: US / Luggage & Bags > Special Purpose Bags
+    url: https://www.aliexpress.us/category/3805/special-purpose-bags.html?SortType=total_tranpro_desc
+
+  - name: COM / Luggage & Bags > Special Purpose Bags
+    url: https://www.aliexpress.com/category/3805/special-purpose-bags.html?SortType=total_tranpro_desc
+
+  - name: US / Luggage & Bags > Handbags
+    url: https://www.aliexpress.us/category/200000742/handbags.html?SortType=total_tranpro_desc
+
+  - name: COM / Luggage & Bags > Handbags
+    url: https://www.aliexpress.com/category/200000742/handbags.html?SortType=total_tranpro_desc
+
+  - name: US / Luggage & Bags > Messenger Bags
+    url: https://www.aliexpress.us/category/100002612/messenger-bags.html?SortType=total_tranpro_desc
+
+  - name: COM / Luggage & Bags > Messenger Bags
+    url: https://www.aliexpress.com/category/100002612/messenger-bags.html?SortType=total_tranpro_desc
+
+  - name: US / Luggage & Bags > Bag Parts & Accessories
+    url: https://www.aliexpress.us/category/152409/bag-parts-accessories.html?SortType=total_tranpro_desc
+
+  - name: COM / Luggage & Bags > Bag Parts & Accessories
+    url: https://www.aliexpress.com/category/152409/bag-parts-accessories.html?SortType=total_tranpro_desc
+
+  - name: US / Luggage & Bags > Luggage & Travel Bags
+    url: https://www.aliexpress.us/category/152404/luggage-travel-bags.html?SortType=total_tranpro_desc
+
+  - name: COM / Luggage & Bags > Luggage & Travel Bags
+    url: https://www.aliexpress.com/category/152404/luggage-travel-bags.html?SortType=total_tranpro_desc
+
+  - name: US / Luggage & Bags > Wallets & Holders
+    url: https://www.aliexpress.us/category/3803/wallets-holders.html?SortType=total_tranpro_desc
+
+  - name: COM / Luggage & Bags > Wallets & Holders
+    url: https://www.aliexpress.com/category/3803/wallets-holders.html?SortType=total_tranpro_desc
+
+  - name: US / Luggage & Bags > Sports & Leisure Bags
+    url: https://www.aliexpress.us/category/3806/sports-leisure-bags.html?SortType=total_tranpro_desc
+
+  - name: COM / Luggage & Bags > Sports & Leisure Bags
+    url: https://www.aliexpress.com/category/3806/sports-leisure-bags.html?SortType=total_tranpro_desc
+
+  - name: US / Luggage & Bags > Backpacks
+    url: https://www.aliexpress.us/category/152401/backpacks.html?SortType=total_tranpro_desc
+
+  - name: COM / Luggage & Bags > Backpacks
+    url: https://www.aliexpress.com/category/152401/backpacks.html?SortType=total_tranpro_desc
+
+  - name: US / Luggage & Bags > Briefcases
+    url: https://www.aliexpress.us/category/152402/briefcases.html?SortType=total_tranpro_desc
+
+  - name: COM / Luggage & Bags > Briefcases
+    url: https://www.aliexpress.com/category/152402/briefcases.html?SortType=total_tranpro_desc
+
+  - name: US / Luggage & Bags > Waist Packs
+    url: https://www.aliexpress.us/category/200001085/waist-packs.html?SortType=total_tranpro_desc
+
+  - name: COM / Luggage & Bags > Waist Packs
+    url: https://www.aliexpress.com/category/200001085/waist-packs.html?SortType=total_tranpro_desc
+
+  - name: US / Luggage & Bags > Travel Accessories
+    url: https://www.aliexpress.us/category/200001123/travel-accessories.html?SortType=total_tranpro_desc
+
+  - name: COM / Luggage & Bags > Travel Accessories
+    url: https://www.aliexpress.com/category/200001123/travel-accessories.html?SortType=total_tranpro_desc
+
+  - name: US / Shoes > Women's Shoes
+    url: https://www.aliexpress.us/category/100001606/women-shoes.html?SortType=total_tranpro_desc
+
+  - name: COM / Shoes > Women's Shoes
+    url: https://www.aliexpress.com/category/100001606/women-shoes.html?SortType=total_tranpro_desc
+
+  - name: US / Shoes > Men's Shoes
+    url: https://www.aliexpress.us/category/100001615/men-shoes.html?SortType=total_tranpro_desc
+
+  - name: COM / Shoes > Men's Shoes
+    url: https://www.aliexpress.com/category/100001615/men-shoes.html?SortType=total_tranpro_desc
+
+  - name: US / Shoes > Shoe Accessories
+    url: https://www.aliexpress.us/category/200002124/shoe-accessories.html?SortType=total_tranpro_desc
+
+  - name: COM / Shoes > Shoe Accessories
+    url: https://www.aliexpress.com/category/200002124/shoe-accessories.html?SortType=total_tranpro_desc
+
+  - name: US / Shoes > Children's Shoes
+    url: https://www.aliexpress.us/category/32212/children-shoes.html?SortType=total_tranpro_desc
+
+  - name: COM / Shoes > Children's Shoes
+    url: https://www.aliexpress.com/category/32212/children-shoes.html?SortType=total_tranpro_desc
+
+  - name: US / Watches > Sports Watches
+    url: https://www.aliexpress.us/category/200003929/sports-watches.html?SortType=total_tranpro_desc
+
+  - name: COM / Watches > Sports Watches
+    url: https://www.aliexpress.com/category/200003929/sports-watches.html?SortType=total_tranpro_desc
+
+  - name: US / Watches > Wristwatches
+    url: https://www.aliexpress.us/category/100002824/wristwatches.html?SortType=total_tranpro_desc
+
+  - name: COM / Watches > Wristwatches
+    url: https://www.aliexpress.com/category/100002824/wristwatches.html?SortType=total_tranpro_desc
+
+  - name: US / Watches > Fashion & Casual Watches
+    url: https://www.aliexpress.us/category/200004149/fashion-casual-watches.html?SortType=total_tranpro_desc
+
+  - name: COM / Watches > Fashion & Casual Watches
+    url: https://www.aliexpress.com/category/200004149/fashion-casual-watches.html?SortType=total_tranpro_desc
+
+  - name: US / Watches > Watch Accessories
+    url: https://www.aliexpress.us/category/200000084/watch-accessories.html?SortType=total_tranpro_desc
+
+  - name: COM / Watches > Watch Accessories
+    url: https://www.aliexpress.com/category/200000084/watch-accessories.html?SortType=total_tranpro_desc
+
+  - name: US / Watches > Pocket & Fob Watches
+    url: https://www.aliexpress.us/category/361120/pocket-fob-watches.html?SortType=total_tranpro_desc
+
+  - name: COM / Watches > Pocket & Fob Watches
+    url: https://www.aliexpress.com/category/361120/pocket-fob-watches.html?SortType=total_tranpro_desc
+
+  - name: US / Food > Tea
+    url: https://www.aliexpress.us/category/100006182/tea.html?SortType=total_tranpro_desc
+
+  - name: COM / Food > Tea
+    url: https://www.aliexpress.com/category/100006182/tea.html?SortType=total_tranpro_desc
+
+  - name: US / Food > Grain Products
+    url: https://www.aliexpress.us/category/238/grain-products.html?SortType=total_tranpro_desc
+
+  - name: COM / Food > Grain Products
+    url: https://www.aliexpress.com/category/238/grain-products.html?SortType=total_tranpro_desc
+
+  - name: US / Food > Coffee
+    url: https://www.aliexpress.us/category/289/coffee.html?SortType=total_tranpro_desc
+
+  - name: COM / Food > Coffee
+    url: https://www.aliexpress.com/category/289/coffee.html?SortType=total_tranpro_desc
+
+  - name: US / Food > Dried Fruit
+    url: https://www.aliexpress.us/category/200002418/dried-fruit.html?SortType=total_tranpro_desc
+
+  - name: COM / Food > Dried Fruit
+    url: https://www.aliexpress.com/category/200002418/dried-fruit.html?SortType=total_tranpro_desc
+
+  - name: US / Food > Nut & Kernel
+    url: https://www.aliexpress.us/category/200002419/nut-kernel.html?SortType=total_tranpro_desc
+
+  - name: COM / Food > Nut & Kernel
+    url: https://www.aliexpress.com/category/200002419/nut-kernel.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Women > Dresses
+    url: https://www.aliexpress.us/category/200003482/dresses.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Women > Dresses
+    url: https://www.aliexpress.com/category/200003482/dresses.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Women > Accessories
+    url: https://www.aliexpress.us/category/200000724/accessories.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Women > Accessories
+    url: https://www.aliexpress.com/category/200000724/accessories.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Women > Intimates
+    url: https://www.aliexpress.us/category/200000773/intimates.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Women > Intimates
+    url: https://www.aliexpress.com/category/200000773/intimates.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Women > Outerwear & Coats
+    url: https://www.aliexpress.us/category/200000775/outerwear-coats.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Women > Outerwear & Coats
+    url: https://www.aliexpress.com/category/200000775/outerwear-coats.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Women > Tops & Tees
+    url: https://www.aliexpress.us/category/200000785/tops-tees.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Women > Tops & Tees
+    url: https://www.aliexpress.com/category/200000785/tops-tees.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Women > Blazer & Suits
+    url: https://www.aliexpress.us/category/200000782/blazer-suits.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Women > Blazer & Suits
+    url: https://www.aliexpress.com/category/200000782/blazer-suits.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Women > Skirts
+    url: https://www.aliexpress.us/category/100005798/skirts.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Women > Skirts
+    url: https://www.aliexpress.com/category/100005798/skirts.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Women > Hoodies & Sweatshirts
+    url: https://www.aliexpress.us/category/100003141/hoodies-sweatshirts.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Women > Hoodies & Sweatshirts
+    url: https://www.aliexpress.com/category/100003141/hoodies-sweatshirts.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Women > Blouses & Shirts
+    url: https://www.aliexpress.us/category/200001648/blouses-shirts.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Women > Blouses & Shirts
+    url: https://www.aliexpress.com/category/200001648/blouses-shirts.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Women > Sweaters
+    url: https://www.aliexpress.us/category/200000783/sweaters.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Women > Sweaters
+    url: https://www.aliexpress.com/category/200000783/sweaters.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Women > Sleep & Lounge
+    url: https://www.aliexpress.us/category/200000777/sleep-lounge.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Women > Sleep & Lounge
+    url: https://www.aliexpress.com/category/200000777/sleep-lounge.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Women > Pants & Capris
+    url: https://www.aliexpress.us/category/100003142/pants-capris.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Women > Pants & Capris
+    url: https://www.aliexpress.com/category/100003142/pants-capris.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Women > Maternity
+    url: https://www.aliexpress.us/category/200000774/maternity.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Women > Maternity
+    url: https://www.aliexpress.com/category/200000774/maternity.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Women > Socks & Hosiery
+    url: https://www.aliexpress.us/category/200000781/socks-hosiery.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Women > Socks & Hosiery
+    url: https://www.aliexpress.com/category/200000781/socks-hosiery.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Women > Swimwear
+    url: https://www.aliexpress.us/category/200000784/swimwear.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Women > Swimwear
+    url: https://www.aliexpress.com/category/200000784/swimwear.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Women > Leggings
+    url: https://www.aliexpress.us/category/200001089/leggings.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Women > Leggings
+    url: https://www.aliexpress.com/category/200001089/leggings.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Women > Jeans
+    url: https://www.aliexpress.us/category/100003161/jeans.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Women > Jeans
+    url: https://www.aliexpress.com/category/100003161/jeans.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Women > Leather Clothing
+    url: https://www.aliexpress.us/category/200004209/leather-clothing.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Women > Leather Clothing
+    url: https://www.aliexpress.com/category/200004209/leather-clothing.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Women > Shorts
+    url: https://www.aliexpress.us/category/100003163/shorts.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Women > Shorts
+    url: https://www.aliexpress.com/category/100003163/shorts.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Women > Jumpsuits & Rompers
+    url: https://www.aliexpress.us/category/200001092/jumpsuits-rompers.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Women > Jumpsuits & Rompers
+    url: https://www.aliexpress.com/category/200001092/jumpsuits-rompers.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Men > Accessories
+    url: https://www.aliexpress.us/category/200000599/accessories.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Men > Accessories
+    url: https://www.aliexpress.com/category/200000599/accessories.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Men > Coats & Jackets
+    url: https://www.aliexpress.us/category/200000662/coats-jackets.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Men > Coats & Jackets
+    url: https://www.aliexpress.com/category/200000662/coats-jackets.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Men > Hoodies & Sweatshirts
+    url: https://www.aliexpress.us/category/100003084/hoodies-sweatshirts.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Men > Hoodies & Sweatshirts
+    url: https://www.aliexpress.com/category/100003084/hoodies-sweatshirts.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Men > Jeans
+    url: https://www.aliexpress.us/category/100003086/jeans.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Men > Jeans
+    url: https://www.aliexpress.com/category/100003086/jeans.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Men > Pants
+    url: https://www.aliexpress.us/category/100003085/pants.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Men > Pants
+    url: https://www.aliexpress.com/category/100003085/pants.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Men > Shirts
+    url: https://www.aliexpress.us/category/200000668/shirts.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Men > Shirts
+    url: https://www.aliexpress.com/category/200000668/shirts.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Men > Shorts
+    url: https://www.aliexpress.us/category/100003088/shorts.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Men > Shorts
+    url: https://www.aliexpress.com/category/100003088/shorts.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Men > Sleep & Lounge
+    url: https://www.aliexpress.us/category/200000673/sleep-lounge.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Men > Sleep & Lounge
+    url: https://www.aliexpress.com/category/200000673/sleep-lounge.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Men > Socks
+    url: https://www.aliexpress.us/category/200003491/socks.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Men > Socks
+    url: https://www.aliexpress.com/category/200003491/socks.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Men > Suits & Blazers
+    url: https://www.aliexpress.us/category/200000692/suits-blazers.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Men > Suits & Blazers
+    url: https://www.aliexpress.com/category/200000692/suits-blazers.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Men > Sweaters
+    url: https://www.aliexpress.us/category/200000701/sweaters.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Men > Sweaters
+    url: https://www.aliexpress.com/category/200000701/sweaters.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Men > Swimwear
+    url: https://www.aliexpress.us/category/200000706/swimwear.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Men > Swimwear
+    url: https://www.aliexpress.com/category/200000706/swimwear.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Men > Tops & Tees
+    url: https://www.aliexpress.us/category/200000707/tops-tees.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Men > Tops & Tees
+    url: https://www.aliexpress.com/category/200000707/tops-tees.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Men > Underwear
+    url: https://www.aliexpress.us/category/200000708/underwear.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Men > Underwear
+    url: https://www.aliexpress.com/category/200000708/underwear.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Girls > Swimwear
+    url: https://www.aliexpress.us/category/200000871/swimwear.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Girls > Swimwear
+    url: https://www.aliexpress.com/category/200000871/swimwear.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Girls > Accessories
+    url: https://www.aliexpress.us/category/200000857/accessories.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Girls > Accessories
+    url: https://www.aliexpress.com/category/200000857/accessories.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Girls > Clothing Sets
+    url: https://www.aliexpress.us/category/100003232/clothing-sets.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Girls > Clothing Sets
+    url: https://www.aliexpress.com/category/100003232/clothing-sets.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Girls > Pants
+    url: https://www.aliexpress.us/category/100003226/pants.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Girls > Pants
+    url: https://www.aliexpress.com/category/100003226/pants.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Girls > Dresses
+    url: https://www.aliexpress.us/category/100005782/dresses.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Girls > Dresses
+    url: https://www.aliexpress.com/category/100005782/dresses.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Girls > Tops & Tees
+    url: https://www.aliexpress.us/category/200000872/tops-tees.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Girls > Tops & Tees
+    url: https://www.aliexpress.com/category/200000872/tops-tees.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Girls > Socks, Tights & Leggings
+    url: https://www.aliexpress.us/category/200000869/socks-tights-leggings.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Girls > Socks, Tights & Leggings
+    url: https://www.aliexpress.com/category/200000869/socks-tights-leggings.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Girls > Outerwear & Coats
+    url: https://www.aliexpress.us/category/200000863/outerwear-coats.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Girls > Outerwear & Coats
+    url: https://www.aliexpress.com/category/200000863/outerwear-coats.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Girls > Sweaters
+    url: https://www.aliexpress.us/category/100003206/sweaters.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Girls > Sweaters
+    url: https://www.aliexpress.com/category/100003206/sweaters.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Girls > Sleepwear & Robes
+    url: https://www.aliexpress.us/category/200000868/sleepwear-robes.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Girls > Sleepwear & Robes
+    url: https://www.aliexpress.com/category/200000868/sleepwear-robes.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Girls > Hoodies & Sweatshirts
+    url: https://www.aliexpress.us/category/100003207/hoodies-sweatshirts.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Girls > Hoodies & Sweatshirts
+    url: https://www.aliexpress.com/category/100003207/hoodies-sweatshirts.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Girls > Underwear
+    url: https://www.aliexpress.us/category/200000873/underwear.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Girls > Underwear
+    url: https://www.aliexpress.com/category/200000873/underwear.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Girls > Skirts
+    url: https://www.aliexpress.us/category/100005783/skirts.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Girls > Skirts
+    url: https://www.aliexpress.com/category/100005783/skirts.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Girls > Jeans
+    url: https://www.aliexpress.us/category/100003227/jeans.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Girls > Jeans
+    url: https://www.aliexpress.com/category/100003227/jeans.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Girls > Blouses & Shirts
+    url: https://www.aliexpress.us/category/200000858/blouses-shirts.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Girls > Blouses & Shirts
+    url: https://www.aliexpress.com/category/200000858/blouses-shirts.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Girls > Shorts
+    url: https://www.aliexpress.us/category/100003228/shorts.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Girls > Shorts
+    url: https://www.aliexpress.com/category/100003228/shorts.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Girls > Overalls
+    url: https://www.aliexpress.us/category/200000864/overalls.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Girls > Overalls
+    url: https://www.aliexpress.com/category/200000864/overalls.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Boys > Accessories
+    url: https://www.aliexpress.us/category/200000840/accessories.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Boys > Accessories
+    url: https://www.aliexpress.com/category/200000840/accessories.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Boys > Clothing Sets
+    url: https://www.aliexpress.us/category/100003196/clothing-sets.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Boys > Clothing Sets
+    url: https://www.aliexpress.com/category/100003196/clothing-sets.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Boys > Hoodies & Sweatshirts
+    url: https://www.aliexpress.us/category/100003191/hoodies-sweatshirts.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Boys > Hoodies & Sweatshirts
+    url: https://www.aliexpress.com/category/100003191/hoodies-sweatshirts.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Boys > Jeans
+    url: https://www.aliexpress.us/category/100003198/jeans.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Boys > Jeans
+    url: https://www.aliexpress.com/category/100003198/jeans.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Boys > Leg Warmers
+    url: https://www.aliexpress.us/category/200000841/leg-warmers.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Boys > Leg Warmers
+    url: https://www.aliexpress.com/category/200000841/leg-warmers.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Boys > Outerwear & Coats
+    url: https://www.aliexpress.us/category/200000846/outerwear-coats.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Boys > Outerwear & Coats
+    url: https://www.aliexpress.com/category/200000846/outerwear-coats.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Boys > Overalls
+    url: https://www.aliexpress.us/category/200000847/overalls.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Boys > Overalls
+    url: https://www.aliexpress.com/category/200000847/overalls.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Boys > Pants
+    url: https://www.aliexpress.us/category/100003192/pants.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Boys > Pants
+    url: https://www.aliexpress.com/category/100003192/pants.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Boys > Shirts
+    url: https://www.aliexpress.us/category/100003188/shirts.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Boys > Shirts
+    url: https://www.aliexpress.com/category/100003188/shirts.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Boys > Shorts
+    url: https://www.aliexpress.us/category/100003193/shorts.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Boys > Shorts
+    url: https://www.aliexpress.com/category/100003193/shorts.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Boys > Sleepwear & Robes
+    url: https://www.aliexpress.us/category/200000850/sleepwear-robes.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Boys > Sleepwear & Robes
+    url: https://www.aliexpress.com/category/200000850/sleepwear-robes.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Boys > Socks
+    url: https://www.aliexpress.us/category/200001665/socks.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Boys > Socks
+    url: https://www.aliexpress.com/category/200001665/socks.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Boys > Suits & Blazers
+    url: https://www.aliexpress.us/category/200000852/suits-blazers.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Boys > Suits & Blazers
+    url: https://www.aliexpress.com/category/200000852/suits-blazers.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Boys > Sweaters
+    url: https://www.aliexpress.us/category/100003190/sweaters.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Boys > Sweaters
+    url: https://www.aliexpress.com/category/100003190/sweaters.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Boys > Swimwear
+    url: https://www.aliexpress.us/category/200000854/swimwear.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Boys > Swimwear
+    url: https://www.aliexpress.com/category/200000854/swimwear.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Boys > Tops & Tees
+    url: https://www.aliexpress.us/category/200000855/tops-tees.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Boys > Tops & Tees
+    url: https://www.aliexpress.com/category/200000855/tops-tees.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Boys > Underwear
+    url: https://www.aliexpress.us/category/100003195/underwear.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Boys > Underwear
+    url: https://www.aliexpress.com/category/100003195/underwear.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Weddings & Events > Special Occasion Dresses
+    url: https://www.aliexpress.us/category/200001521/special-occasion-dresses.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Weddings & Events > Special Occasion Dresses
+    url: https://www.aliexpress.com/category/200001521/special-occasion-dresses.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Weddings & Events > Wedding Accessories
+    url: https://www.aliexpress.us/category/100005624/wedding-accessories.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Weddings & Events > Wedding Accessories
+    url: https://www.aliexpress.com/category/100005624/wedding-accessories.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Weddings & Events > Wedding Dresses
+    url: https://www.aliexpress.us/category/100003269/wedding-dresses.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Weddings & Events > Wedding Dresses
+    url: https://www.aliexpress.com/category/100003269/wedding-dresses.html?SortType=total_tranpro_desc
+
+  - name: US / Apparel & Accessories > Weddings & Events > Wedding Party Dress
+    url: https://www.aliexpress.us/category/200001520/wedding-party-dress.html?SortType=total_tranpro_desc
+
+  - name: COM / Apparel & Accessories > Weddings & Events > Wedding Party Dress
+    url: https://www.aliexpress.com/category/200001520/wedding-party-dress.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Kitchen Appliances > Vacuum Food Sealers
+    url: https://www.aliexpress.us/category/100000048/vacuum-food-sealers.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Kitchen Appliances > Vacuum Food Sealers
+    url: https://www.aliexpress.com/category/100000048/vacuum-food-sealers.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Kitchen Appliances > Electric Air Pots
+    url: https://www.aliexpress.us/category/100000031/electric-air-pots.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Kitchen Appliances > Electric Air Pots
+    url: https://www.aliexpress.com/category/100000031/electric-air-pots.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Kitchen Appliances > Cooking Appliances
+    url: https://www.aliexpress.us/category/100000017/cooking-appliances.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Kitchen Appliances > Cooking Appliances
+    url: https://www.aliexpress.com/category/100000017/cooking-appliances.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Kitchen Appliances > Other Kitchen Appliances
+    url: https://www.aliexpress.us/category/64399/other-kitchen-appliances.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Kitchen Appliances > Other Kitchen Appliances
+    url: https://www.aliexpress.com/category/64399/other-kitchen-appliances.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Kitchen Appliances > Electric Kettles
+    url: https://www.aliexpress.us/category/640/electric-kettles.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Kitchen Appliances > Electric Kettles
+    url: https://www.aliexpress.com/category/640/electric-kettles.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Kitchen Appliances > Blenders
+    url: https://www.aliexpress.us/category/64301/blenders.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Kitchen Appliances > Blenders
+    url: https://www.aliexpress.com/category/64301/blenders.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Kitchen Appliances > Juicers
+    url: https://www.aliexpress.us/category/611/juicers.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Kitchen Appliances > Juicers
+    url: https://www.aliexpress.com/category/611/juicers.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Kitchen Appliances > Coffee Makers
+    url: https://www.aliexpress.us/category/638/coffee-makers.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Kitchen Appliances > Coffee Makers
+    url: https://www.aliexpress.com/category/638/coffee-makers.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Kitchen Appliances > Ice Crushers & Shavers
+    url: https://www.aliexpress.us/category/100005833/ice-crushers-shavers.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Kitchen Appliances > Ice Crushers & Shavers
+    url: https://www.aliexpress.com/category/100005833/ice-crushers-shavers.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Kitchen Appliances > Coffee Grinders
+    url: https://www.aliexpress.us/category/100001605/coffee-grinders.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Kitchen Appliances > Coffee Grinders
+    url: https://www.aliexpress.com/category/100001605/coffee-grinders.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Kitchen Appliances > Vegetable Washers
+    url: https://www.aliexpress.us/category/64315/vegetable-washers.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Kitchen Appliances > Vegetable Washers
+    url: https://www.aliexpress.com/category/64315/vegetable-washers.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Kitchen Appliances > Ice Cream Makers
+    url: https://www.aliexpress.us/category/64316/ice-cream-makers.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Kitchen Appliances > Ice Cream Makers
+    url: https://www.aliexpress.com/category/64316/ice-cream-makers.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Kitchen Appliances > Yogurt Makers
+    url: https://www.aliexpress.us/category/64311/yogurt-makers.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Kitchen Appliances > Yogurt Makers
+    url: https://www.aliexpress.com/category/64311/yogurt-makers.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Kitchen Appliances > Meat Grinders
+    url: https://www.aliexpress.us/category/64317/meat-grinders.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Kitchen Appliances > Meat Grinders
+    url: https://www.aliexpress.com/category/64317/meat-grinders.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Kitchen Appliances > Disinfecting Cabinets
+    url: https://www.aliexpress.us/category/616/disinfecting-cabinets.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Kitchen Appliances > Disinfecting Cabinets
+    url: https://www.aliexpress.com/category/616/disinfecting-cabinets.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Kitchen Appliances > Food Mixers
+    url: https://www.aliexpress.us/category/612/food-mixers.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Kitchen Appliances > Food Mixers
+    url: https://www.aliexpress.com/category/612/food-mixers.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Kitchen Appliances > Popcorn Makers
+    url: https://www.aliexpress.us/category/64312/popcorn-makers.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Kitchen Appliances > Popcorn Makers
+    url: https://www.aliexpress.com/category/64312/popcorn-makers.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Kitchen Appliances > Food Processors
+    url: https://www.aliexpress.us/category/64302/food-processors.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Kitchen Appliances > Food Processors
+    url: https://www.aliexpress.com/category/64302/food-processors.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Kitchen Appliances > Food Waste Disposers
+    url: https://www.aliexpress.us/category/100000033/food-waste-disposers.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Kitchen Appliances > Food Waste Disposers
+    url: https://www.aliexpress.com/category/100000033/food-waste-disposers.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Kitchen Appliances > Dish Washers
+    url: https://www.aliexpress.us/category/615/dish-washers.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Kitchen Appliances > Dish Washers
+    url: https://www.aliexpress.com/category/615/dish-washers.html?SortType=total_tranpro_desc
+
+  - name: US / Home Appliances > Kitchen Appliances > Coffee Roasters
+    url: https://www.aliexpress.us/category/100000030/coffee-roasters.html?SortType=total_tranpro_desc
+
+  - name: COM / Home Appliances > Kitchen Appliances > Coffee Roasters
+    url: https://www.aliexpress.com/category/100000030/coffee-roasters.html?SortType=total_tranpro_desc
+
+  - name: US / Shoes > Women's Shoes > Boots
+    url: https://www.aliexpress.us/category/100001607/boots.html?SortType=total_tranpro_desc
+
+  - name: COM / Shoes > Women's Shoes > Boots
+    url: https://www.aliexpress.com/category/100001607/boots.html?SortType=total_tranpro_desc
+
+  - name: US / Shoes > Women's Shoes > Sneakers
+    url: https://www.aliexpress.us/category/200002164/sneakers.html?SortType=total_tranpro_desc
+
+  - name: COM / Shoes > Women's Shoes > Sneakers
+    url: https://www.aliexpress.com/category/200002164/sneakers.html?SortType=total_tranpro_desc
+
+  - name: US / Shoes > Women's Shoes > Flats
+    url: https://www.aliexpress.us/category/200002155/flats.html?SortType=total_tranpro_desc
+
+  - name: COM / Shoes > Women's Shoes > Flats
+    url: https://www.aliexpress.com/category/200002155/flats.html?SortType=total_tranpro_desc
+
+  - name: US / Shoes > Women's Shoes > Women's Athletic Shoes
+    url: https://www.aliexpress.us/category/200002144/women-athletic-shoes.html?SortType=total_tranpro_desc
+
+  - name: COM / Shoes > Women's Shoes > Women's Athletic Shoes
+    url: https://www.aliexpress.com/category/200002144/women-athletic-shoes.html?SortType=total_tranpro_desc
+
+  - name: US / Shoes > Women's Shoes > Pumps
+    url: https://www.aliexpress.us/category/200002161/pumps.html?SortType=total_tranpro_desc
+
+  - name: COM / Shoes > Women's Shoes > Pumps
+    url: https://www.aliexpress.com/category/200002161/pumps.html?SortType=total_tranpro_desc
+
+  - name: US / Shoes > Women's Shoes > Sandals
+    url: https://www.aliexpress.us/category/100001611/sandals.html?SortType=total_tranpro_desc
+
+  - name: COM / Shoes > Women's Shoes > Sandals
+    url: https://www.aliexpress.com/category/100001611/sandals.html?SortType=total_tranpro_desc
+
+  - name: US / Shoes > Women's Shoes > Slippers
+    url: https://www.aliexpress.us/category/100001610/slippers.html?SortType=total_tranpro_desc
+
+  - name: COM / Shoes > Women's Shoes > Slippers
+    url: https://www.aliexpress.com/category/100001610/slippers.html?SortType=total_tranpro_desc
+
+  - name: US / Shoes > Women's Shoes > Oxfords
+    url: https://www.aliexpress.us/category/200002160/oxfords.html?SortType=total_tranpro_desc
+
+  - name: COM / Shoes > Women's Shoes > Oxfords
+    url: https://www.aliexpress.com/category/200002160/oxfords.html?SortType=total_tranpro_desc
+
+  - name: US / Shoes > Women's Shoes > Boat Shoes
+    url: https://www.aliexpress.us/category/200003334/boat-shoes.html?SortType=total_tranpro_desc
+
+  - name: COM / Shoes > Women's Shoes > Boat Shoes
+    url: https://www.aliexpress.com/category/200003334/boat-shoes.html?SortType=total_tranpro_desc
+
+  - name: US / Shoes > Women's Shoes > Loafers
+    url: https://www.aliexpress.us/category/200002157/loafers.html?SortType=total_tranpro_desc
+
+  - name: COM / Shoes > Women's Shoes > Loafers
+    url: https://www.aliexpress.com/category/200002157/loafers.html?SortType=total_tranpro_desc
+
+  - name: US / Shoes > Women's Shoes > Mules & Clogs
+    url: https://www.aliexpress.us/category/100001612/mules-clogs.html?SortType=total_tranpro_desc
+
+  - name: COM / Shoes > Women's Shoes > Mules & Clogs
+    url: https://www.aliexpress.com/category/100001612/mules-clogs.html?SortType=total_tranpro_desc
+
+  - name: US / Shoes > Men's Shoes > Men's Athletic Shoes
+    url: https://www.aliexpress.us/category/200002143/men-athletic-shoes.html?SortType=total_tranpro_desc
+
+  - name: COM / Shoes > Men's Shoes > Men's Athletic Shoes
+    url: https://www.aliexpress.com/category/200002143/men-athletic-shoes.html?SortType=total_tranpro_desc
+
+  - name: US / Shoes > Men's Shoes > Sneakers
+    url: https://www.aliexpress.us/category/200002136/sneakers.html?SortType=total_tranpro_desc
+
+  - name: COM / Shoes > Men's Shoes > Sneakers
+    url: https://www.aliexpress.com/category/200002136/sneakers.html?SortType=total_tranpro_desc
+
+  - name: US / Shoes > Men's Shoes > Boots
+    url: https://www.aliexpress.us/category/100001617/boots.html?SortType=total_tranpro_desc
+
+  - name: COM / Shoes > Men's Shoes > Boots
+    url: https://www.aliexpress.com/category/100001617/boots.html?SortType=total_tranpro_desc
+
+  - name: US / Shoes > Men's Shoes > Flats
+    url: https://www.aliexpress.us/category/200002253/flats.html?SortType=total_tranpro_desc
+
+  - name: COM / Shoes > Men's Shoes > Flats
+    url: https://www.aliexpress.com/category/200002253/flats.html?SortType=total_tranpro_desc
+
+  - name: US / Shoes > Men's Shoes > Slippers
+    url: https://www.aliexpress.us/category/100001618/slippers.html?SortType=total_tranpro_desc
+
+  - name: COM / Shoes > Men's Shoes > Slippers
+    url: https://www.aliexpress.com/category/100001618/slippers.html?SortType=total_tranpro_desc
+
+  - name: US / Shoes > Men's Shoes > Sandals
+    url: https://www.aliexpress.us/category/100001619/sandals.html?SortType=total_tranpro_desc
+
+  - name: COM / Shoes > Men's Shoes > Sandals
+    url: https://www.aliexpress.com/category/100001619/sandals.html?SortType=total_tranpro_desc
+
+  - name: US / Shoes > Men's Shoes > Loafers
+    url: https://www.aliexpress.us/category/200002158/loafers.html?SortType=total_tranpro_desc
+
+  - name: COM / Shoes > Men's Shoes > Loafers
+    url: https://www.aliexpress.com/category/200002158/loafers.html?SortType=total_tranpro_desc
+
+  - name: US / Shoes > Men's Shoes > Oxfords
+    url: https://www.aliexpress.us/category/200002118/oxfords.html?SortType=total_tranpro_desc
+
+  - name: COM / Shoes > Men's Shoes > Oxfords
+    url: https://www.aliexpress.com/category/200002118/oxfords.html?SortType=total_tranpro_desc
+
+  - name: US / Shoes > Men's Shoes > Boat Shoes
+    url: https://www.aliexpress.us/category/200002148/boat-shoes.html?SortType=total_tranpro_desc
+
+  - name: COM / Shoes > Men's Shoes > Boat Shoes
+    url: https://www.aliexpress.com/category/200002148/boat-shoes.html?SortType=total_tranpro_desc
+
+  - name: US / Shoes > Men's Shoes > Mules & Clogs
+    url: https://www.aliexpress.us/category/100001620/mules-clogs.html?SortType=total_tranpro_desc
+
+  - name: COM / Shoes > Men's Shoes > Mules & Clogs
+    url: https://www.aliexpress.com/category/100001620/mules-clogs.html?SortType=total_tranpro_desc
+
+  - name: US / Shoes > Children's Shoes > Boys
+    url: https://www.aliexpress.us/category/200002104/boys.html?SortType=total_tranpro_desc
+
+  - name: COM / Shoes > Children's Shoes > Boys
+    url: https://www.aliexpress.com/category/200002104/boys.html?SortType=total_tranpro_desc
+
+  - name: US / Shoes > Children's Shoes > Girls
+    url: https://www.aliexpress.us/category/200002107/girls.html?SortType=total_tranpro_desc
+
+  - name: COM / Shoes > Children's Shoes > Girls
+    url: https://www.aliexpress.com/category/200002107/girls.html?SortType=total_tranpro_desc

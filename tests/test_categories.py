@@ -1,0 +1,98 @@
+# -*- coding: utf-8 -*-
+from __future__ import annotations
+
+import re
+import subprocess
+import sys
+import unittest
+from pathlib import Path
+
+import yaml
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from alilj import category_path_depth, load_categories  # noqa: E402
+
+CATEGORY_URL_RE = re.compile(
+    r"^https://www\.aliexpress\.(us|com)/category/\d+/[^/?]+\.html\?SortType=total_tranpro_desc$"
+)
+
+
+class CategoryConfigTests(unittest.TestCase):
+    def test_category_path_depth(self) -> None:
+        self.assertEqual(category_path_depth("US / Shoes"), 1)
+        self.assertEqual(category_path_depth("COM / Apparel & Accessories > Women"), 2)
+        self.assertEqual(
+            category_path_depth("US / Apparel & Accessories > Women > Dresses"),
+            3,
+        )
+
+    def test_load_categories_count(self) -> None:
+        categories = load_categories()
+        self.assertGreaterEqual(len(categories), 500)
+        self.assertEqual(len(categories) % 2, 0)
+
+    def test_category_urls_are_valid(self) -> None:
+        for name, url in load_categories():
+            self.assertTrue(
+                name.startswith("US / ") or name.startswith("COM / "),
+                msg=f"Bad site prefix: {name}",
+            )
+            self.assertRegex(url, CATEGORY_URL_RE, msg=f"Bad URL for {name}")
+
+    def test_required_top_level_categories(self) -> None:
+        names = {name.split(" / ", 1)[1] for name, _ in load_categories() if " > " not in name}
+        required = {
+            "Apparel & Accessories",
+            "Shoes",
+            "Watches",
+            "Luggage & Bags",
+            "Computer & Office",
+            "Baby & Maternity",
+            "Pet Supplies",
+            "Hair Extensions & Wigs",
+        }
+        missing = required - names
+        self.assertFalse(missing, msg=f"Missing L1 categories: {missing}")
+
+    def test_l3_entries_have_three_levels(self) -> None:
+        for name, _ in load_categories():
+            if category_path_depth(name) == 3:
+                self.assertIn(" > ", name.split(" / ", 1)[1])
+
+    def test_us_com_category_ids_match(self) -> None:
+        pairs: dict[str, dict[str, str]] = {}
+        for name, url in load_categories():
+            path = name.split(" / ", 1)[1]
+            site = name.split(" / ", 1)[0]
+            match = re.search(r"/category/(\d+)/", url)
+            self.assertIsNotNone(match, msg=f"No category id in {url}")
+            cat_id = match.group(1)  # type: ignore[union-attr]
+            pairs.setdefault(path, {})[site] = cat_id
+
+        mismatched = {
+            path: ids for path, ids in pairs.items() if len(set(ids.values())) > 1
+        }
+        self.assertFalse(
+            mismatched,
+            msg=f"US/COM category id mismatch: {list(mismatched.items())[:5]}",
+        )
+
+    def test_generate_categories_script(self) -> None:
+        script = ROOT / "scripts" / "generate_categories_yaml.py"
+        result = subprocess.run(
+            [sys.executable, str(script)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr or result.stdout)
+
+        raw = yaml.safe_load((ROOT / "config" / "categories.yaml").read_text(encoding="utf-8"))
+        self.assertGreaterEqual(len(raw["categories"]), 500)
+
+
+if __name__ == "__main__":
+    unittest.main()

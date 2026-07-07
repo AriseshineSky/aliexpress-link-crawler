@@ -98,6 +98,12 @@ def load_categories() -> list[tuple[str, str]]:
     return [(item["name"], item["url"]) for item in raw["categories"]]
 
 
+def category_path_depth(category_name: str) -> int:
+    """Return hierarchy depth after the site prefix, e.g. 'US / A > B > C' -> 3."""
+    path = category_name.split(" / ", 1)[-1]
+    return path.count(" > ") + 1
+
+
 def load_seen_links() -> set[str]:
     seen: set[str] = set()
     if LINKS_FILE.exists():
@@ -1138,7 +1144,7 @@ async def main_async() -> None:
         try:
             for category_name, category_url in categories:
                 targets = [(category_name, category_url)]
-                if CRAWL_SUBCATEGORIES:
+                if CRAWL_SUBCATEGORIES and category_path_depth(category_name) < 3:
                     for attempt in range(2):
                         try:
                             if context is None or page is None or page.is_closed():
