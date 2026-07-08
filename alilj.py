@@ -41,6 +41,21 @@ REQUEST_DELAY_MS = (2000, 4000)
 GOTO_MAX_RETRIES = 5
 GOTO_RETRY_BASE_DELAY_S = 5
 
+load_dotenv(BASE_DIR / ".env")
+if categories_file := (os.getenv("CATEGORIES_FILE") or "").strip():
+    CATEGORIES_FILE = Path(categories_file)
+    if not CATEGORIES_FILE.is_absolute():
+        CATEGORIES_FILE = BASE_DIR / CATEGORIES_FILE
+if max_pages := (os.getenv("MAX_PAGES_PER_CATEGORY") or "").strip():
+    MAX_PAGES_PER_CATEGORY = int(max_pages)
+if (os.getenv("CRAWL_SUBCATEGORIES") or "").strip().lower() in {"0", "false", "no"}:
+    CRAWL_SUBCATEGORIES = False
+if (os.getenv("HEADLESS") or "").strip().lower() in {"1", "true", "yes"}:
+    HEADLESS = True
+if delay_ms := (os.getenv("REQUEST_DELAY_MS") or "").strip():
+    low, high = delay_ms.split(",", 1)
+    REQUEST_DELAY_MS = (int(low), int(high))
+
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -274,11 +289,18 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def is_browser_dead(exc: BaseException) -> bool:
-    if exc.__class__.__name__ == "TargetClosedError":
-        return True
+def is_browser_dead(exc: BaseException, *, page: Page | None = None) -> bool:
+    is_target_closed = exc.__class__.__name__ == "TargetClosedError"
     message = str(exc)
-    return any(marker in message for marker in BROWSER_DEAD_MARKERS)
+    looks_closed = is_target_closed or any(
+        marker in message for marker in BROWSER_DEAD_MARKERS
+    )
+    if not looks_closed:
+        return False
+    # Captcha iframes often detach while the page is still alive.
+    if page is not None and not page.is_closed():
+        return False
+    return True
 
 
 def is_transient_network_error(exc: BaseException) -> bool:
@@ -584,15 +606,28 @@ def is_captcha_text(text: str) -> bool:
     return any(marker in lowered for marker in markers)
 
 
+async def read_page_text(page: Page) -> tuple[str, str] | None:
+    try:
+        title = await page.title()
+        html = await page.content()
+    except Exception as exc:
+        if is_browser_dead(exc, page=page):
+            raise
+        return None
+    return title, html
+
+
 async def drag_slider_if_present(page: Page) -> bool:
     if page.is_closed():
         return False
     selector = "#nc_1_n1z"
     for frame in list(page.frames):
+        if frame.is_detached():
+            continue
         try:
             slider = await frame.query_selector(selector)
         except Exception as exc:
-            if is_browser_dead(exc):
+            if is_browser_dead(exc, page=page):
                 raise
             if is_transient_frame_error(exc):
                 continue
@@ -638,7 +673,7 @@ async def drag_slider_if_present(page: Page) -> bool:
             await page.wait_for_timeout(2000)
             return True
         except Exception as exc:
-            if is_browser_dead(exc):
+            if is_browser_dead(exc, page=page):
                 raise
             if is_transient_frame_error(exc):
                 continue
@@ -663,7 +698,7 @@ async def safe_goto(page: Page, url: str) -> None:
             await page.wait_for_timeout(2500)
             return
         except Exception as exc:
-            if is_browser_dead(exc):
+            if is_browser_dead(exc, page=page):
                 raise
             if is_transient_network_error(exc) and attempt < GOTO_MAX_RETRIES:
                 wait_s = GOTO_RETRY_BASE_DELAY_S * attempt + random.uniform(0, 2)
@@ -679,18 +714,16 @@ async def safe_goto(page: Page, url: str) -> None:
 async def handle_captcha(page: Page) -> bool:
     if page.is_closed():
         raise RuntimeError("浏览器页面已关闭，请重启爬虫")
-    try:
-        title = await page.title()
-        html = await page.content()
-    except Exception as exc:
-        if is_browser_dead(exc):
-            raise
+    page_text = await read_page_text(page)
+    if page_text is None:
         return False
+    title, html = page_text
 
     slider_dragged = await drag_slider_if_present(page)
     if slider_dragged:
-        title = await page.title()
-        html = await page.content()
+        page_text = await read_page_text(page)
+        if page_text is not None:
+            title, html = page_text
     if not slider_dragged and not is_captcha_text(title + "\n" + html):
         return False
 
@@ -701,10 +734,17 @@ async def handle_captcha(page: Page) -> bool:
         if page.is_closed():
             raise RuntimeError("浏览器页面已关闭，请重启爬虫")
         await drag_slider_if_present(page)
-        await page.wait_for_timeout(2000)
+        try:
+            await page.wait_for_timeout(2000)
+        except Exception as exc:
+            if is_browser_dead(exc, page=page):
+                raise
+            continue
         waited += 2
-        title = await page.title()
-        html = await page.content()
+        page_text = await read_page_text(page)
+        if page_text is None:
+            continue
+        title, html = page_text
         if not is_captcha_text(title + "\n" + html):
             print("验证已通过，继续抓取。")
             return True
@@ -1160,7 +1200,7 @@ async def main_async() -> None:
                                 targets.extend(subs)
                             break
                         except Exception as exc:
-                            if is_browser_dead(exc) and attempt == 0:
+                            if is_browser_dead(exc, page=page) and attempt == 0:
                                 print(f"子类目发现时浏览器异常，重启：{exc}")
                                 await close_browser(context)
                                 context, page, collector = None, None, None
@@ -1181,7 +1221,7 @@ async def main_async() -> None:
                             )
                             break
                         except Exception as exc:
-                            if is_browser_dead(exc) and attempt == 0:
+                            if is_browser_dead(exc, page=page) and attempt == 0:
                                 print(f"抓取时浏览器异常，重启：{exc}")
                                 await close_browser(context)
                                 context, page, collector = None, None, None
