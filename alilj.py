@@ -3,7 +3,8 @@
 AliExpress 商品链接抓取（alilj.py）。
 
 只抓列表页，不抓详情；从列表页 API + DOM 提取价格、评分、评论数、销量。
-支持 aliexpress.us / aliexpress.com、子类目、滑块验证码自动拖动 + 手动兜底。
+首页分类入口为 /p/calp-plus/?categoryTab=...，商品靠无限下滑加载（非 ?page=N）。
+支持 aliexpress.us / aliexpress.com、calp 子类目点击、滑块验证码自动拖动 + 手动兜底。
 输出：产品链接.txt、产品列表.jsonl、Elasticsearch（ELASTICSEARCH_INDEX_URLS）
 """
 
@@ -35,8 +36,9 @@ HEADLESS = False
 CAPTCHA_WAIT_SECONDS = 120
 CRAWL_SUBCATEGORIES = True
 MAX_SUBCATEGORY_DEPTH = 5
-MAX_PAGES_PER_CATEGORY = 0
-CONSECUTIVE_DUPLICATE_PAGES_TO_STOP = 3
+MAX_PAGES_PER_CATEGORY = 0  # 兼容旧环境变量；>0 时作为最大滚动轮数
+MAX_SCROLL_ROUNDS = 0  # 0 = 不限制，直到连续无新商品
+CONSECUTIVE_DUPLICATE_SCROLLS_TO_STOP = 3
 REQUEST_DELAY_MS = (2000, 4000)
 GOTO_MAX_RETRIES = 5
 GOTO_RETRY_BASE_DELAY_S = 5
@@ -48,6 +50,10 @@ if categories_file := (os.getenv("CATEGORIES_FILE") or "").strip():
         CATEGORIES_FILE = BASE_DIR / CATEGORIES_FILE
 if max_pages := (os.getenv("MAX_PAGES_PER_CATEGORY") or "").strip():
     MAX_PAGES_PER_CATEGORY = int(max_pages)
+    if MAX_PAGES_PER_CATEGORY > 0 and not (os.getenv("MAX_SCROLL_ROUNDS") or "").strip():
+        MAX_SCROLL_ROUNDS = MAX_PAGES_PER_CATEGORY
+if max_scrolls := (os.getenv("MAX_SCROLL_ROUNDS") or "").strip():
+    MAX_SCROLL_ROUNDS = int(max_scrolls)
 if (os.getenv("CRAWL_SUBCATEGORIES") or "").strip().lower() in {"0", "false", "no"}:
     CRAWL_SUBCATEGORIES = False
 if (os.getenv("HEADLESS") or "").strip().lower() in {"1", "true", "yes"}:
@@ -55,6 +61,8 @@ if (os.getenv("HEADLESS") or "").strip().lower() in {"1", "true", "yes"}:
 if delay_ms := (os.getenv("REQUEST_DELAY_MS") or "").strip():
     low, high = delay_ms.split(",", 1)
     REQUEST_DELAY_MS = (int(low), int(high))
+if dup_stop := (os.getenv("CONSECUTIVE_DUPLICATE_SCROLLS_TO_STOP") or "").strip():
+    CONSECUTIVE_DUPLICATE_SCROLLS_TO_STOP = int(dup_stop)
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -338,7 +346,7 @@ def _item_url_from_api(product_id: str, raw_url: str | None, site_base: str) -> 
 
 
 class ListingCollector:
-    """拦截 AliExpress 列表页搜索 API，补全懒加载商品。"""
+    """拦截 AliExpress 列表/推荐 API，补全无限滚动懒加载商品。"""
 
     def __init__(self) -> None:
         self.search_payloads: list[dict] = []
@@ -358,16 +366,18 @@ class ListingCollector:
         if not payload:
             return
         if any(
-            marker in url
+            marker in url.lower()
             for marker in (
                 "aer-webapi/v1/search",
                 "aliexpressrecommend.recommend",
+                "aliexpressseorecommend.recommend",
+                "seorecommend",
                 "search-pc",
             )
         ):
             self.search_payloads.append(payload)
-            if len(self.search_payloads) > 30:
-                del self.search_payloads[:-30]
+            if len(self.search_payloads) > 40:
+                del self.search_payloads[:-40]
 
     def extract_products(self, site_base: str) -> list[ListingProduct]:
         products: list[ListingProduct] = []
@@ -495,8 +505,9 @@ class ElasticsearchUrlWriter:
         load_dotenv(BASE_DIR / ".env")
         url = (os.getenv("ELASTICSEARCH_URL") or "").strip()
         self.index = (os.getenv("ELASTICSEARCH_INDEX_URLS") or "").strip()
+        placeholder = (not url) or ("@host:" in url) or url.rstrip("/").endswith("://host:9200")
         self.chunk_size = int(os.getenv("ELASTICSEARCH_BULK_CHUNK_SIZE", "50"))
-        self.enabled = bool(url and self.index)
+        self.enabled = bool(url and self.index and not placeholder)
         self.client: Elasticsearch | None = None
         self.buffer: list[dict] = []
         self.saved = 0
@@ -555,11 +566,17 @@ class ElasticsearchUrlWriter:
             return
 
         batch = self.buffer
-        success_count, errors = helpers.bulk(
-            self.client,
-            batch,
-            raise_on_error=False,
-        )
+        try:
+            success_count, errors = helpers.bulk(
+                self.client,
+                batch,
+                raise_on_error=False,
+            )
+        except Exception as exc:
+            self.failed += len(batch)
+            self.buffer.clear()
+            print(f"ES bulk 失败（已跳过 {len(batch)} 条）：{exc}")
+            return
         failed_count = len(errors) if isinstance(errors, list) else 0
         self.saved += int(success_count)
         self.failed += failed_count
@@ -714,6 +731,7 @@ async def safe_goto(page: Page, url: str) -> None:
 async def handle_captcha(page: Page) -> bool:
     if page.is_closed():
         raise RuntimeError("浏览器页面已关闭，请重启爬虫")
+    await dismiss_popups(page)
     page_text = await read_page_text(page)
     if page_text is None:
         return False
@@ -752,19 +770,70 @@ async def handle_captcha(page: Page) -> bool:
     return True
 
 
+async def dismiss_popups(page: Page) -> None:
+    """Close login / promo overlays that block scrolling."""
+    if page.is_closed():
+        return
+    for sel in (
+        ".pop-close-btn",
+        ".batman-dialog-close",
+        "[class*='batman-dialog'] [class*='close']",
+        "button[aria-label='Close']",
+        "button[aria-label='close']",
+    ):
+        try:
+            loc = page.locator(sel).first
+            if await loc.count() and await loc.is_visible():
+                await loc.click(timeout=1500, force=True)
+                await page.wait_for_timeout(400)
+        except Exception:
+            continue
+    try:
+        await page.evaluate(
+            """
+            () => {
+              for (const el of [...document.querySelectorAll('div,section')]) {
+                const text = el.innerText || '';
+                if (!text.includes('Register/Sign in')) continue;
+                const r = el.getBoundingClientRect();
+                if (r.width < 300 || r.height < 200) continue;
+                let p = el;
+                for (let i = 0; i < 6 && p; i++) {
+                  const style = getComputedStyle(p);
+                  const box = p.getBoundingClientRect();
+                  if (
+                    style.position === 'fixed' ||
+                    (box.width >= window.innerWidth * 0.7 &&
+                      box.height >= window.innerHeight * 0.5)
+                  ) {
+                    p.remove();
+                    break;
+                  }
+                  p = p.parentElement;
+                }
+              }
+              document.body.style.overflow = 'auto';
+            }
+            """
+        )
+    except Exception:
+        pass
+
+
+def is_calp_url(url: str) -> bool:
+    return "/p/calp-plus/" in url or "categoryTab=" in url
+
+
 async def scroll_listing_page(page: Page) -> None:
-    await page.evaluate(
-        """
-        async () => {
-          for (let i = 0; i < 12; i++) {
-            window.scrollBy(0, Math.max(700, window.innerHeight * 0.85));
-            await new Promise((resolve) => setTimeout(resolve, 450));
-          }
-          window.scrollTo(0, 0);
-        }
-        """
-    )
-    await page.wait_for_timeout(3500)
+    """One user-like scroll step to trigger infinite-load batches (~30 items)."""
+    await dismiss_popups(page)
+    try:
+        await page.evaluate(
+            "window.scrollBy(0, Math.max(1000, window.innerHeight * 0.9))"
+        )
+    except Exception:
+        return
+    await page.wait_for_timeout(2200)
 
 
 async def enrich_rating_reviews(page: Page, products: list[ListingProduct]) -> None:
@@ -805,8 +874,6 @@ async def enrich_rating_reviews(page: Page, products: list[ListingProduct]) -> N
 
 
 async def extract_products(page: Page, site_base: str, collector: ListingCollector) -> list[ListingProduct]:
-    await scroll_listing_page(page)
-
     products = collector.extract_products(site_base)
 
     raw_items = await page.evaluate(
@@ -916,6 +983,58 @@ def category_id_from_url(category_url: str) -> str:
     return match.group(1) if match else ""
 
 
+async def list_calp_lv3_names(page: Page) -> list[str]:
+    names = await page.evaluate(
+        """
+        () => {
+          const out = [];
+          const seen = new Set();
+          for (const el of document.querySelectorAll('[class*="lv3Category"]')) {
+            const box = el.closest('[class*="lv3CategoryBox"]') || el;
+            const text = (box.innerText || '').trim().replace(/\\s+/g, ' ');
+            const name = text.split('\\n').map(s => s.trim()).filter(Boolean).pop() || text;
+            if (!name || name.length < 2 || name.length > 60) continue;
+            const key = name.toLowerCase();
+            if (seen.has(key)) continue;
+            seen.add(key);
+            out.push(name);
+          }
+          return out;
+        }
+        """
+    )
+    return list(names or [])
+
+
+async def click_calp_lv3(page: Page, name: str) -> bool:
+    await dismiss_popups(page)
+    return bool(
+        await page.evaluate(
+            """
+            (targetName) => {
+              const want = targetName.toLowerCase();
+              const nodes = [...document.querySelectorAll(
+                '[class*="lv3CategoryBox"], [class*="lv3Category"]'
+              )];
+              for (const el of nodes) {
+                const text = (el.innerText || '').trim().replace(/\\s+/g, ' ');
+                const label = text.split('\\n').map(s => s.trim()).filter(Boolean).pop() || text;
+                if (label.toLowerCase() !== want && !label.toLowerCase().startsWith(want)) {
+                  continue;
+                }
+                const clickable = el.closest('[class*="lv3CategoryBox"]') || el;
+                clickable.scrollIntoView({ block: 'center' });
+                clickable.click();
+                return true;
+              }
+              return false;
+            }
+            """,
+            name,
+        )
+    )
+
+
 async def discover_direct_subcategories(
     page: Page,
     category_name: str,
@@ -923,10 +1042,15 @@ async def discover_direct_subcategories(
     *,
     exclude_ids: set[str] | None = None,
 ) -> list[tuple[str, str]]:
+    if is_calp_url(category_url):
+        # Calp lv3 icons have no href; handled inside crawl_category via clicks.
+        return []
+
     parent_id = category_id_from_url(category_url)
     site_host = site_host_from_url(category_url)
     excluded = exclude_ids or set()
     await safe_goto(page, category_url)
+    await dismiss_popups(page)
     await handle_captcha(page)
     await scroll_listing_page(page)
     await sleep()
@@ -1057,6 +1181,67 @@ def save_new_products(
     return new_count
 
 
+async def crawl_infinite_scroll(
+    page: Page,
+    category_name: str,
+    site_base: str,
+    seen_links: set[str],
+    collector: ListingCollector,
+    es_writer: ElasticsearchUrlWriter | None = None,
+) -> int:
+    """Scroll until consecutive rounds yield no new product IDs."""
+    total_new = 0
+    seen_ids: set[str] = set()
+    consecutive_dup = 0
+    round_no = 0
+
+    while True:
+        if MAX_SCROLL_ROUNDS > 0 and round_no >= MAX_SCROLL_ROUNDS:
+            print(f"达到最大滚动轮数 {MAX_SCROLL_ROUNDS}，停止：{category_name}")
+            break
+
+        round_no += 1
+        if round_no > 1:
+            await scroll_listing_page(page)
+        else:
+            await dismiss_popups(page)
+            await page.wait_for_timeout(1500)
+
+        await handle_captcha(page)
+        products = await extract_products(page, site_base, collector)
+        current_ids = {p.product_id for p in products}
+        fresh = current_ids - seen_ids
+        new_count = save_new_products(products, seen_links, category_name, es_writer)
+        if es_writer is not None:
+            es_writer.flush()
+        total_new += new_count
+        with_metrics = sum(
+            1 for p in products if p.rating is not None and p.reviews is not None
+        )
+        print(
+            f"滚动第 {round_no} 轮：可见/API 合计 {len(products)} 个"
+            f"（{with_metrics} 个含评分+评论数），"
+            f"本轮新 ID {len(fresh)} 个，保存新增 {new_count} 个"
+        )
+
+        if (not current_ids or not fresh) and round_no > 1:
+            consecutive_dup += 1
+        else:
+            consecutive_dup = 0
+
+        seen_ids.update(current_ids)
+
+        if consecutive_dup >= CONSECUTIVE_DUPLICATE_SCROLLS_TO_STOP:
+            print(
+                f"连续 {consecutive_dup} 轮无新商品，判定 {category_name} 已到底。"
+            )
+            break
+
+        await sleep(short=True)
+
+    return total_new
+
+
 async def crawl_category(
     page: Page,
     category_name: str,
@@ -1067,61 +1252,53 @@ async def crawl_category(
 ) -> int:
     total_new = 0
     site_base = site_base_from_url(category_url)
-    start_urls = [category_url]
-    if " > " not in category_name:
-        start_urls.append(wholesale_search_url(category_name, site_base))
-
     print(f"\n类目：{category_name}")
+    print(f"打开：{category_url}")
 
-    for start_url in start_urls:
-        page_seen_ids: set[str] = set()
-        consecutive_duplicate_pages = 0
-        page_no = 1
-        while True:
-            if MAX_PAGES_PER_CATEGORY > 0 and page_no > MAX_PAGES_PER_CATEGORY:
-                break
+    collector.clear()
+    await safe_goto(page, category_url)
+    await dismiss_popups(page)
+    await handle_captcha(page)
+    await sleep()
 
-            page_url = build_page_url(start_url, page_no)
-            print(f"打开第 {page_no} 页：{page_url}")
-            collector.clear()
-            await safe_goto(page, page_url)
+    total_new += await crawl_infinite_scroll(
+        page, category_name, site_base, seen_links, collector, es_writer
+    )
+
+    if is_calp_url(category_url) and CRAWL_SUBCATEGORIES and " > " not in category_name:
+        await safe_goto(page, category_url)
+        await dismiss_popups(page)
+        await handle_captcha(page)
+        await page.wait_for_timeout(2000)
+        lv3_names = await list_calp_lv3_names(page)
+        if lv3_names:
+            print(f"发现 {len(lv3_names)} 个 calp 子类目图标：{category_name}")
+        for sub_name in lv3_names:
+            target_name = f"{category_name} > {sub_name}"
+            print(f"\n子类目（点击）：{target_name}")
+            await safe_goto(page, category_url)
+            await dismiss_popups(page)
             await handle_captcha(page)
-            await sleep(short=page_no > 1)
-
-            products = await extract_products(page, site_base, collector)
-            current_ids = {p.product_id for p in products}
-            fresh_on_page = current_ids - page_seen_ids
-            new_count = save_new_products(products, seen_links, category_name, es_writer)
-            if es_writer is not None:
-                es_writer.flush()
-            total_new += new_count
-            with_metrics = sum(
-                1
-                for p in products
-                if p.rating is not None and p.reviews is not None
-            )
-            print(
-                f"第 {page_no} 页：发现 {len(products)} 个商品（{with_metrics} 个含评分+评论数），"
-                f"本页新商品 {len(fresh_on_page)} 个，保存新增 {new_count} 个"
+            await page.wait_for_timeout(1500)
+            if not await click_calp_lv3(page, sub_name):
+                print(f"未能点击子类目：{sub_name}")
+                continue
+            await page.wait_for_timeout(2500)
+            collector.clear()
+            total_new += await crawl_infinite_scroll(
+                page, target_name, site_base, seen_links, collector, es_writer
             )
 
-            if not current_ids:
-                print(f"第 {page_no} 页没有数据，判定 {category_name} 到最后一页。")
-                break
-            if page_no > 1 and not fresh_on_page:
-                consecutive_duplicate_pages += 1
-                if consecutive_duplicate_pages >= CONSECUTIVE_DUPLICATE_PAGES_TO_STOP:
-                    print(
-                        f"连续 {consecutive_duplicate_pages} 页无新商品，"
-                        f"判定 {category_name} 没有更多页。"
-                    )
-                    break
-            else:
-                consecutive_duplicate_pages = 0
-
-            page_seen_ids.update(current_ids)
-            page_no += 1
-            await sleep()
+    elif (not is_calp_url(category_url)) and " > " not in category_name:
+        wholesale = wholesale_search_url(category_name, site_base)
+        print(f"\n附加批发搜索：{wholesale}")
+        collector.clear()
+        await safe_goto(page, wholesale)
+        await dismiss_popups(page)
+        await handle_captcha(page)
+        total_new += await crawl_infinite_scroll(
+            page, category_name, site_base, seen_links, collector, es_writer
+        )
 
     return total_new
 
@@ -1170,7 +1347,11 @@ async def main_async() -> None:
     print(f"子类目发现: {'开启' if CRAWL_SUBCATEGORIES else '关闭'}")
     if CRAWL_SUBCATEGORIES:
         print(f"子类目最大深度: {MAX_SUBCATEGORY_DEPTH}")
-    print(f"分页重复停止阈值: 连续 {CONSECUTIVE_DUPLICATE_PAGES_TO_STOP} 页无新商品")
+    print(
+        f"滚动重复停止阈值: 连续 {CONSECUTIVE_DUPLICATE_SCROLLS_TO_STOP} 轮无新商品"
+    )
+    if MAX_SCROLL_ROUNDS > 0:
+        print(f"最大滚动轮数: {MAX_SCROLL_ROUNDS}")
     print()
 
     seen_links = load_seen_links()
@@ -1184,7 +1365,13 @@ async def main_async() -> None:
         try:
             for category_name, category_url in categories:
                 targets = [(category_name, category_url)]
-                if CRAWL_SUBCATEGORIES and category_path_depth(category_name) < 3:
+                # Classic /category/ seeds still auto-discover linked subcats.
+                # Calp-plus lv3 icons are clicked inside crawl_category.
+                if (
+                    CRAWL_SUBCATEGORIES
+                    and not is_calp_url(category_url)
+                    and category_path_depth(category_name) < 3
+                ):
                     for attempt in range(2):
                         try:
                             if context is None or page is None or page.is_closed():
