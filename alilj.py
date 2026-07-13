@@ -4,7 +4,7 @@ AliExpress 商品链接抓取（alilj.py）。
 
 只抓列表页，不抓详情；从列表页 API + DOM 提取价格、评分、评论数、销量。
 首页分类入口为 /p/calp-plus/?categoryTab=...，商品靠无限下滑加载（非 ?page=N）。
-支持 aliexpress.us / aliexpress.com、calp 子类目点击、滑块验证码自动拖动 + 手动兜底。
+默认只抓 aliexpress.us；支持 calp 子类目点击、滑块验证码自动拖动 + 手动兜底。
 输出：产品链接.txt、产品列表.jsonl、Elasticsearch（ELASTICSEARCH_INDEX_URLS）
 """
 
@@ -1343,7 +1343,7 @@ async def main_async() -> None:
     print(f"浏览器状态目录: {USER_DATA_DIR}")
     print(f"商品链接文件: {LINKS_FILE}")
     print(f"商品列表文件: {PRODUCTS_JSONL}")
-    print(f"类目数量: {len(categories)}（含 US / COM）")
+    print(f"类目数量: {len(categories)}（US）")
     print(f"子类目发现: {'开启' if CRAWL_SUBCATEGORIES else '关闭'}")
     if CRAWL_SUBCATEGORIES:
         print(f"子类目最大深度: {MAX_SUBCATEGORY_DEPTH}")

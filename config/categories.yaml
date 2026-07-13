@@ -1,4 +1,4 @@
-# AliExpress category URLs from homepage calp-plus tabs (.us + .com).
+# AliExpress US category URLs from homepage calp-plus tabs.
 # Product lists load via infinite scroll (not ?page=N).
 # Subcategory icons on calp pages are in-page filters (no separate URL);
 # the crawler clicks them when CRAWL_SUBCATEGORIES=1.
@@ -6,143 +6,71 @@ categories:
   - name: US / Automotive
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=automotive
 
-  - name: COM / Automotive
-    url: https://www.aliexpress.com/p/calp-plus/index.html?categoryTab=automotive
-
   - name: US / Appliances
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=appliances
-
-  - name: COM / Appliances
-    url: https://www.aliexpress.com/p/calp-plus/index.html?categoryTab=appliances
 
   - name: US / Women's Clothing
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=women%27s_clothing
 
-  - name: COM / Women's Clothing
-    url: https://www.aliexpress.com/p/calp-plus/index.html?categoryTab=women%27s_clothing
-
   - name: US / Men's Clothing
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=men%27s_clothing
-
-  - name: COM / Men's Clothing
-    url: https://www.aliexpress.com/p/calp-plus/index.html?categoryTab=men%27s_clothing
 
   - name: US / Furniture
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=furniture
 
-  - name: COM / Furniture
-    url: https://www.aliexpress.com/p/calp-plus/index.html?categoryTab=furniture
-
   - name: US / Toys & Games
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=toys_%26_games
-
-  - name: COM / Toys & Games
-    url: https://www.aliexpress.com/p/calp-plus/index.html?categoryTab=toys_%26_games
 
   - name: US / Shoes
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=shoes
 
-  - name: COM / Shoes
-    url: https://www.aliexpress.com/p/calp-plus/index.html?categoryTab=shoes
-
   - name: US / Beauty & Health
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=beauty_%26_health
-
-  - name: COM / Beauty & Health
-    url: https://www.aliexpress.com/p/calp-plus/index.html?categoryTab=beauty_%26_health
 
   - name: US / Hair Extensions & Wigs
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=hair_extensions_%26_wigs
 
-  - name: COM / Hair Extensions & Wigs
-    url: https://www.aliexpress.com/p/calp-plus/index.html?categoryTab=hair_extensions_%26_wigs
-
   - name: US / Jewelry & Accessories
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=jewelry_%26_accessories
-
-  - name: COM / Jewelry & Accessories
-    url: https://www.aliexpress.com/p/calp-plus/index.html?categoryTab=jewelry_%26_accessories
 
   - name: US / Pet Supplies
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=pet_supplies
 
-  - name: COM / Pet Supplies
-    url: https://www.aliexpress.com/p/calp-plus/index.html?categoryTab=pet_supplies
-
   - name: US / Cell Phones & Accessories
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=cell_phones_%26_accessories
-
-  - name: COM / Cell Phones & Accessories
-    url: https://www.aliexpress.com/p/calp-plus/index.html?categoryTab=cell_phones_%26_accessories
 
   - name: US / Electronics
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=electronics
 
-  - name: COM / Electronics
-    url: https://www.aliexpress.com/p/calp-plus/index.html?categoryTab=electronics
-
   - name: US / Patio, Lawn & Garden
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=patio%2C_lawn_%26_garden
-
-  - name: COM / Patio, Lawn & Garden
-    url: https://www.aliexpress.com/p/calp-plus/index.html?categoryTab=patio%2C_lawn_%26_garden
 
   - name: US / Tools & Home Improvement
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=tools_%26_home_improvement
 
-  - name: COM / Tools & Home Improvement
-    url: https://www.aliexpress.com/p/calp-plus/index.html?categoryTab=tools_%26_home_improvement
-
   - name: US / Bags & Luggage
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=bags_%26_luggage
-
-  - name: COM / Bags & Luggage
-    url: https://www.aliexpress.com/p/calp-plus/index.html?categoryTab=bags_%26_luggage
 
   - name: US / Novelty & Special Use
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=novelty_%26_special_use
 
-  - name: COM / Novelty & Special Use
-    url: https://www.aliexpress.com/p/calp-plus/index.html?categoryTab=novelty_%26_special_use
-
   - name: US / Sports & Outdoors
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=sports_%26_outdoors
-
-  - name: COM / Sports & Outdoors
-    url: https://www.aliexpress.com/p/calp-plus/index.html?categoryTab=sports_%26_outdoors
 
   - name: US / Baby & Maternity
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=baby_%26_maternity
 
-  - name: COM / Baby & Maternity
-    url: https://www.aliexpress.com/p/calp-plus/index.html?categoryTab=baby_%26_maternity
-
   - name: US / Arts, Crafts & Sewing
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=arts%2C_crafts_%26_sewing
-
-  - name: COM / Arts, Crafts & Sewing
-    url: https://www.aliexpress.com/p/calp-plus/index.html?categoryTab=arts%2C_crafts_%26_sewing
 
   - name: US / Office & School Supplies
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=office_%26_school_supplies
 
-  - name: COM / Office & School Supplies
-    url: https://www.aliexpress.com/p/calp-plus/index.html?categoryTab=office_%26_school_supplies
-
   - name: US / Motorcycles & Powersports
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=motorcycles_%26_powersports
-
-  - name: COM / Motorcycles & Powersports
-    url: https://www.aliexpress.com/p/calp-plus/index.html?categoryTab=motorcycles_%26_powersports
 
   - name: US / Books & Media
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=books_%26_media
 
-  - name: COM / Books & Media
-    url: https://www.aliexpress.com/p/calp-plus/index.html?categoryTab=books_%26_media
-
   - name: US / Business, Industry & Science
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=business%2C_industry_%26_science
-
-  - name: COM / Business, Industry & Science
-    url: https://www.aliexpress.com/p/calp-plus/index.html?categoryTab=business%2C_industry_%26_science

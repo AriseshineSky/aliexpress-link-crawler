@@ -48,10 +48,9 @@ def name_to_category_tab(name: str) -> str:
     return name.strip().lower().replace(" ", "_")
 
 
-def calp_url(site: str, category_tab: str) -> str:
-    host = "www.aliexpress.us" if site == "US" else "www.aliexpress.com"
+def calp_url(category_tab: str) -> str:
     return (
-        f"https://{host}/p/calp-plus/index.html"
+        "https://www.aliexpress.us/p/calp-plus/index.html"
         f"?categoryTab={quote(category_tab, safe='')}"
     )
 
@@ -110,7 +109,7 @@ async def scrape_home_categories() -> list[dict[str, str]]:
 
 def write_yaml(categories: list[tuple[str, str]]) -> None:
     lines = [
-        "# AliExpress category URLs from homepage calp-plus tabs (.us + .com).",
+        "# AliExpress US category URLs from homepage calp-plus tabs.",
         "# Product lists load via infinite scroll (not ?page=N).",
         "# Subcategory icons on calp pages are in-page filters (no separate URL);",
         "# the crawler clicks them when CRAWL_SUBCATEGORIES=1.",
@@ -128,8 +127,7 @@ def build_entries(l1: list[dict[str, str]]) -> list[tuple[str, str]]:
     for item in l1:
         name = item["name"]
         tab = item.get("categoryTab") or name_to_category_tab(name)
-        for site in ("US", "COM"):
-            entries.append((f"{site} / {name}", calp_url(site, tab)))
+        entries.append((f"US / {name}", calp_url(tab)))
     return entries
 
 
