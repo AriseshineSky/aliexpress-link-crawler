@@ -5,6 +5,7 @@ AliExpress 商品链接抓取（alilj.py）。
 只抓列表页，不抓详情；从列表页 API + DOM 提取价格、评分、评论数、销量。
 首页分类入口为 /p/calp-plus/?categoryTab=...，商品靠无限下滑加载（非 ?page=N）。
 默认只抓 aliexpress.us；支持 calp 子类目点击、滑块验证码自动拖动 + 手动兜底。
+默认偏提速：短间隔、滚动等列表 API、关闭 feedback 补全、calp 页内点子类。
 输出：产品链接.txt、产品列表.jsonl、Elasticsearch（ELASTICSEARCH_INDEX_URLS）
 """
 
@@ -39,9 +40,27 @@ MAX_SUBCATEGORY_DEPTH = 5
 MAX_PAGES_PER_CATEGORY = 0  # 兼容旧环境变量；>0 时作为最大滚动轮数
 MAX_SCROLL_ROUNDS = 0  # 0 = 不限制，直到连续无新商品
 CONSECUTIVE_DUPLICATE_SCROLLS_TO_STOP = 3
-REQUEST_DELAY_MS = (2000, 4000)
+REQUEST_DELAY_MS = (600, 1200)  # 原 2000–4000，默认提速
+GOTO_SETTLE_MS = 800  # safe_goto 后固定等待，原 2500
+SCROLL_API_TIMEOUT_MS = 3500  # 滚动后等列表 API
+SCROLL_FALLBACK_MS = 1200  # API 超时回退等待，原固定 2200
+SCROLL_AFTER_API_MS = 250
+FIRST_ROUND_SETTLE_MS = 600  # 首轮原 1500
+CALP_CLICK_SETTLE_MS = 1000  # 点 lv3 后等待，原 2500
+CALP_RELOAD_EACH_LV3 = False  # True=每个子类目整页重开（更稳更慢）
+ENRICH_MODE = "off"  # off | new | all（默认关反馈补全，主抓 URL）
+ENRICH_CONCURRENCY = 8
+ENRICH_DELAY_MS = 30
 GOTO_MAX_RETRIES = 5
 GOTO_RETRY_BASE_DELAY_S = 5
+
+LIST_API_URL_MARKERS = (
+    "aer-webapi/v1/search",
+    "aliexpressrecommend.recommend",
+    "aliexpressseorecommend.recommend",
+    "seorecommend",
+    "search-pc",
+)
 
 load_dotenv(BASE_DIR / ".env")
 if categories_file := (os.getenv("CATEGORIES_FILE") or "").strip():
@@ -63,6 +82,25 @@ if delay_ms := (os.getenv("REQUEST_DELAY_MS") or "").strip():
     REQUEST_DELAY_MS = (int(low), int(high))
 if dup_stop := (os.getenv("CONSECUTIVE_DUPLICATE_SCROLLS_TO_STOP") or "").strip():
     CONSECUTIVE_DUPLICATE_SCROLLS_TO_STOP = int(dup_stop)
+if goto_settle := (os.getenv("GOTO_SETTLE_MS") or "").strip():
+    GOTO_SETTLE_MS = int(goto_settle)
+if scroll_api := (os.getenv("SCROLL_API_TIMEOUT_MS") or "").strip():
+    SCROLL_API_TIMEOUT_MS = int(scroll_api)
+if scroll_fallback := (os.getenv("SCROLL_FALLBACK_MS") or "").strip():
+    SCROLL_FALLBACK_MS = int(scroll_fallback)
+if (os.getenv("CALP_RELOAD_EACH_LV3") or "").strip().lower() in {"1", "true", "yes"}:
+    CALP_RELOAD_EACH_LV3 = True
+if enrich_mode := (os.getenv("ENRICH_MODE") or "").strip().lower():
+    if enrich_mode in {"off", "new", "all"}:
+        ENRICH_MODE = enrich_mode
+elif (os.getenv("ENRICH_RATING_REVIEWS") or "").strip().lower() in {"1", "true", "yes"}:
+    ENRICH_MODE = "new"
+elif (os.getenv("ENRICH_RATING_REVIEWS") or "").strip().lower() in {"0", "false", "no"}:
+    ENRICH_MODE = "off"
+if enrich_conc := (os.getenv("ENRICH_CONCURRENCY") or "").strip():
+    ENRICH_CONCURRENCY = max(1, int(enrich_conc))
+if enrich_delay := (os.getenv("ENRICH_DELAY_MS") or "").strip():
+    ENRICH_DELAY_MS = max(0, int(enrich_delay))
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -365,16 +403,7 @@ class ListingCollector:
         payload = _parse_json_body(text)
         if not payload:
             return
-        if any(
-            marker in url.lower()
-            for marker in (
-                "aer-webapi/v1/search",
-                "aliexpressrecommend.recommend",
-                "aliexpressseorecommend.recommend",
-                "seorecommend",
-                "search-pc",
-            )
-        ):
+        if any(marker in url.lower() for marker in LIST_API_URL_MARKERS):
             self.search_payloads.append(payload)
             if len(self.search_payloads) > 40:
                 del self.search_payloads[:-40]
@@ -623,15 +652,40 @@ def is_captcha_text(text: str) -> bool:
     return any(marker in lowered for marker in markers)
 
 
-async def read_page_text(page: Page) -> tuple[str, str] | None:
+async def sniff_captcha_signals(page: Page) -> bool:
+    """轻量风控检测：title / URL / 正文前 2k，避免每轮 page.content()。"""
+    if page.is_closed():
+        return False
+    url = (page.url or "").lower()
+    if any(
+        marker in url
+        for marker in ("punish", "captcha", "_____tmd_____", "/login", "security")
+    ):
+        return True
     try:
         title = await page.title()
-        html = await page.content()
     except Exception as exc:
         if is_browser_dead(exc, page=page):
             raise
-        return None
-    return title, html
+        return False
+    if is_captcha_text(title):
+        return True
+    try:
+        snippet = await page.evaluate(
+            "() => ((document.body && document.body.innerText) || '').slice(0, 2000)"
+        )
+    except Exception as exc:
+        if is_browser_dead(exc, page=page):
+            raise
+        return False
+    return is_captcha_text(str(snippet or ""))
+
+
+def is_list_api_response(response) -> bool:
+    url = (response.url or "").lower()
+    if "mtop" not in url and "aer-webapi" not in url:
+        return False
+    return any(marker in url for marker in LIST_API_URL_MARKERS)
 
 
 async def drag_slider_if_present(page: Page) -> bool:
@@ -702,7 +756,7 @@ async def drag_slider_if_present(page: Page) -> bool:
 async def sleep(short: bool = False) -> None:
     low, high = REQUEST_DELAY_MS
     if short:
-        low, high = max(300, low // 2), max(600, high // 2)
+        low, high = max(150, low // 2), max(300, high // 2)
     await asyncio.sleep(random.randint(low, high) / 1000)
 
 
@@ -712,7 +766,8 @@ async def safe_goto(page: Page, url: str) -> None:
     for attempt in range(1, GOTO_MAX_RETRIES + 1):
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=90000)
-            await page.wait_for_timeout(2500)
+            if GOTO_SETTLE_MS > 0:
+                await page.wait_for_timeout(GOTO_SETTLE_MS)
             return
         except Exception as exc:
             if is_browser_dead(exc, page=page):
@@ -732,17 +787,9 @@ async def handle_captcha(page: Page) -> bool:
     if page.is_closed():
         raise RuntimeError("浏览器页面已关闭，请重启爬虫")
     await dismiss_popups(page)
-    page_text = await read_page_text(page)
-    if page_text is None:
-        return False
-    title, html = page_text
 
     slider_dragged = await drag_slider_if_present(page)
-    if slider_dragged:
-        page_text = await read_page_text(page)
-        if page_text is not None:
-            title, html = page_text
-    if not slider_dragged and not is_captcha_text(title + "\n" + html):
+    if not slider_dragged and not await sniff_captcha_signals(page):
         return False
 
     print(f"检测到验证/风控页面：{page.url}")
@@ -759,11 +806,7 @@ async def handle_captcha(page: Page) -> bool:
                 raise
             continue
         waited += 2
-        page_text = await read_page_text(page)
-        if page_text is None:
-            continue
-        title, html = page_text
-        if not is_captcha_text(title + "\n" + html):
+        if not await sniff_captcha_signals(page):
             print("验证已通过，继续抓取。")
             return True
     print("等待结束，页面可能仍在验证状态。")
@@ -785,7 +828,7 @@ async def dismiss_popups(page: Page) -> None:
             loc = page.locator(sel).first
             if await loc.count() and await loc.is_visible():
                 await loc.click(timeout=1500, force=True)
-                await page.wait_for_timeout(400)
+                await page.wait_for_timeout(200)
         except Exception:
             continue
     try:
@@ -825,52 +868,81 @@ def is_calp_url(url: str) -> bool:
 
 
 async def scroll_listing_page(page: Page) -> None:
-    """One user-like scroll step to trigger infinite-load batches (~30 items)."""
+    """One user-like scroll step; prefer waiting for list API over fixed delay."""
     await dismiss_popups(page)
     try:
-        await page.evaluate(
-            "window.scrollBy(0, Math.max(1000, window.innerHeight * 0.9))"
+        async with page.expect_response(is_list_api_response, timeout=SCROLL_API_TIMEOUT_MS):
+            await page.evaluate(
+                "window.scrollBy(0, Math.max(1000, window.innerHeight * 0.9))"
+            )
+        if SCROLL_AFTER_API_MS > 0:
+            await page.wait_for_timeout(SCROLL_AFTER_API_MS)
+        return
+    except Exception as exc:
+        if is_browser_dead(exc, page=page):
+            raise
+        # Timeout：滚动多半已完成且已等过 SCROLL_API_TIMEOUT_MS，无需再叠长等待。
+        name = type(exc).__name__
+        if "Timeout" in name:
+            return
+    if SCROLL_FALLBACK_MS > 0:
+        await page.wait_for_timeout(SCROLL_FALLBACK_MS)
+
+
+async def _enrich_one_product(page: Page, product: ListingProduct) -> None:
+    if product.rating is not None and product.reviews is not None:
+        return
+    try:
+        response = await page.request.get(
+            FEEDBACK_API,
+            params={
+                "productId": product.product_id,
+                "page": "1",
+                "pageSize": "1",
+                "filter": "all",
+                "sort": "complex_default",
+            },
+            timeout=15000,
         )
+        if not response.ok:
+            return
+        payload = await response.json()
+        data = payload.get("data") if isinstance(payload, dict) else {}
+        if not isinstance(data, dict):
+            return
+        stats = data.get("productEvaluationStatistic")
+        rating, reviews = _pick_rating_reviews(stats if isinstance(stats, dict) else {})
+        if product.rating is None and rating is not None:
+            product.rating = rating
+        if product.reviews is None:
+            if reviews is None:
+                reviews = _digits(data.get("totalNum"))
+            if reviews is not None:
+                product.reviews = reviews
     except Exception:
         return
-    await page.wait_for_timeout(2200)
+    if ENRICH_DELAY_MS > 0:
+        await asyncio.sleep(ENRICH_DELAY_MS / 1000)
 
 
 async def enrich_rating_reviews(page: Page, products: list[ListingProduct]) -> None:
     """US 列表卡片常不显示评论数，用 feedback API 补全 rating / reviews。"""
-    for product in products:
-        if product.rating is not None and product.reviews is not None:
-            continue
-        try:
-            response = await page.request.get(
-                FEEDBACK_API,
-                params={
-                    "productId": product.product_id,
-                    "page": "1",
-                    "pageSize": "1",
-                    "filter": "all",
-                    "sort": "complex_default",
-                },
-                timeout=15000,
-            )
-            if not response.ok:
-                continue
-            payload = await response.json()
-            data = payload.get("data") if isinstance(payload, dict) else {}
-            if not isinstance(data, dict):
-                continue
-            stats = data.get("productEvaluationStatistic")
-            rating, reviews = _pick_rating_reviews(stats if isinstance(stats, dict) else {})
-            if product.rating is None and rating is not None:
-                product.rating = rating
-            if product.reviews is None:
-                if reviews is None:
-                    reviews = _digits(data.get("totalNum"))
-                if reviews is not None:
-                    product.reviews = reviews
-        except Exception:
-            continue
-        await asyncio.sleep(0.12)
+    if ENRICH_MODE == "off" or not products:
+        return
+    pending = [
+        p
+        for p in products
+        if p.rating is None or p.reviews is None
+    ]
+    if not pending:
+        return
+    sem = asyncio.Semaphore(ENRICH_CONCURRENCY)
+
+    async def _run(product: ListingProduct) -> None:
+        async with sem:
+            await _enrich_one_product(page, product)
+
+    await asyncio.gather(*(_run(p) for p in pending))
 
 
 async def extract_products(page: Page, site_base: str, collector: ListingCollector) -> list[ListingProduct]:
@@ -974,7 +1046,6 @@ async def extract_products(page: Page, site_base: str, collector: ListingCollect
         )
 
     products = merge_products(products)
-    await enrich_rating_reviews(page, products)
     return products
 
 
@@ -1205,12 +1276,21 @@ async def crawl_infinite_scroll(
             await scroll_listing_page(page)
         else:
             await dismiss_popups(page)
-            await page.wait_for_timeout(1500)
+            if FIRST_ROUND_SETTLE_MS > 0:
+                await page.wait_for_timeout(FIRST_ROUND_SETTLE_MS)
 
         await handle_captcha(page)
         products = await extract_products(page, site_base, collector)
         current_ids = {p.product_id for p in products}
         fresh = current_ids - seen_ids
+
+        if ENRICH_MODE == "all":
+            await enrich_rating_reviews(page, products)
+        elif ENRICH_MODE == "new" and fresh:
+            await enrich_rating_reviews(
+                page, [p for p in products if p.product_id in fresh]
+            )
+
         new_count = save_new_products(products, seen_links, category_name, es_writer)
         if es_writer is not None:
             es_writer.flush()
@@ -1242,6 +1322,29 @@ async def crawl_infinite_scroll(
     return total_new
 
 
+async def _prepare_calp_lv3(page: Page, category_url: str, sub_name: str) -> bool:
+    """点击 calp 子类目；失败时整页重开再点。"""
+    await dismiss_popups(page)
+    try:
+        await page.evaluate("window.scrollTo(0, 0)")
+    except Exception:
+        pass
+    await page.wait_for_timeout(300)
+    if await click_calp_lv3(page, sub_name):
+        if CALP_CLICK_SETTLE_MS > 0:
+            await page.wait_for_timeout(CALP_CLICK_SETTLE_MS)
+        return True
+    await safe_goto(page, category_url)
+    await dismiss_popups(page)
+    await handle_captcha(page)
+    await page.wait_for_timeout(500)
+    if not await click_calp_lv3(page, sub_name):
+        return False
+    if CALP_CLICK_SETTLE_MS > 0:
+        await page.wait_for_timeout(CALP_CLICK_SETTLE_MS)
+    return True
+
+
 async def crawl_category(
     page: Page,
     category_name: str,
@@ -1266,24 +1369,36 @@ async def crawl_category(
     )
 
     if is_calp_url(category_url) and CRAWL_SUBCATEGORIES and " > " not in category_name:
-        await safe_goto(page, category_url)
-        await dismiss_popups(page)
-        await handle_captcha(page)
-        await page.wait_for_timeout(2000)
+        try:
+            await page.evaluate("window.scrollTo(0, 0)")
+        except Exception:
+            pass
+        await page.wait_for_timeout(500)
         lv3_names = await list_calp_lv3_names(page)
+        if not lv3_names:
+            await safe_goto(page, category_url)
+            await dismiss_popups(page)
+            await handle_captcha(page)
+            await page.wait_for_timeout(800)
+            lv3_names = await list_calp_lv3_names(page)
         if lv3_names:
             print(f"发现 {len(lv3_names)} 个 calp 子类目图标：{category_name}")
         for sub_name in lv3_names:
             target_name = f"{category_name} > {sub_name}"
             print(f"\n子类目（点击）：{target_name}")
-            await safe_goto(page, category_url)
-            await dismiss_popups(page)
-            await handle_captcha(page)
-            await page.wait_for_timeout(1500)
-            if not await click_calp_lv3(page, sub_name):
+            if CALP_RELOAD_EACH_LV3:
+                await safe_goto(page, category_url)
+                await dismiss_popups(page)
+                await handle_captcha(page)
+                await page.wait_for_timeout(500)
+                if not await click_calp_lv3(page, sub_name):
+                    print(f"未能点击子类目：{sub_name}")
+                    continue
+                if CALP_CLICK_SETTLE_MS > 0:
+                    await page.wait_for_timeout(CALP_CLICK_SETTLE_MS)
+            elif not await _prepare_calp_lv3(page, category_url, sub_name):
                 print(f"未能点击子类目：{sub_name}")
                 continue
-            await page.wait_for_timeout(2500)
             collector.clear()
             total_new += await crawl_infinite_scroll(
                 page, target_name, site_base, seen_links, collector, es_writer
@@ -1347,11 +1462,16 @@ async def main_async() -> None:
     print(f"子类目发现: {'开启' if CRAWL_SUBCATEGORIES else '关闭'}")
     if CRAWL_SUBCATEGORIES:
         print(f"子类目最大深度: {MAX_SUBCATEGORY_DEPTH}")
+        print(f"calp 每子类重开: {'开启' if CALP_RELOAD_EACH_LV3 else '关闭（页内点击）'}")
     print(
         f"滚动重复停止阈值: 连续 {CONSECUTIVE_DUPLICATE_SCROLLS_TO_STOP} 轮无新商品"
     )
     if MAX_SCROLL_ROUNDS > 0:
         print(f"最大滚动轮数: {MAX_SCROLL_ROUNDS}")
+    print(f"请求间隔: {REQUEST_DELAY_MS[0]}–{REQUEST_DELAY_MS[1]} ms")
+    print(f"评分补全: {ENRICH_MODE}" + (
+        f"（并发 {ENRICH_CONCURRENCY}）" if ENRICH_MODE != "off" else ""
+    ))
     print()
 
     seen_links = load_seen_links()
