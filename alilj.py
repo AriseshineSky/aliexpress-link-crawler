@@ -5,7 +5,7 @@ AliExpress 商品链接抓取（alilj.py）。
 只抓列表页，不抓详情；从列表页 API + DOM 提取价格、评分、评论数、销量。
 首页分类入口为 /p/calp-plus/?categoryTab=...，商品靠无限下滑加载（非 ?page=N）。
 默认只抓 aliexpress.us；支持 calp 子类目点击、滑块验证码自动拖动 + 手动兜底。
-默认偏提速：短间隔、滚动等列表 API、关闭 feedback 补全、calp 页内点子类。
+默认偏提速：短间隔、滚动等列表 API、feedback 补全新商品评分、calp 页内点子类。
 输出：产品链接.txt、产品列表.jsonl、Elasticsearch（ELASTICSEARCH_INDEX_URLS）
 """
 
@@ -48,7 +48,7 @@ SCROLL_AFTER_API_MS = 250
 FIRST_ROUND_SETTLE_MS = 600  # 首轮原 1500
 CALP_CLICK_SETTLE_MS = 1000  # 点 lv3 后等待，原 2500
 CALP_RELOAD_EACH_LV3 = False  # True=每个子类目整页重开（更稳更慢）
-ENRICH_MODE = "off"  # off | new | all（默认关反馈补全，主抓 URL）
+ENRICH_MODE = "new"  # off | new | all（默认补全新商品评分/评论）
 ENRICH_CONCURRENCY = 8
 ENRICH_DELAY_MS = 30
 GOTO_MAX_RETRIES = 5
@@ -301,14 +301,18 @@ FEEDBACK_API = "https://feedback.aliexpress.com/pc/searchEvaluation.do"
 def merge_products(products: list[ListingProduct]) -> list[ListingProduct]:
     merged: dict[str, ListingProduct] = {}
     for product in products:
-        existing = merged.get(product.dedupe_key)
+        key = product.product_id or product.dedupe_key
+        existing = merged.get(key)
         if existing is None:
-            merged[product.dedupe_key] = product
+            merged[key] = product
             continue
-        merged[product.dedupe_key] = ListingProduct(
+        preferred_url = product.url if site_base_from_url(product.url).endswith(".us") else existing.url
+        if not preferred_url:
+            preferred_url = existing.url or product.url
+        merged[key] = ListingProduct(
             product_id=product.product_id,
-            url=product.url or existing.url,
-            source=product.source or existing.source,
+            url=preferred_url or product.url or existing.url,
+            source=source_from_url(preferred_url or product.url or existing.url),
             title=product.title or existing.title,
             price=product.price if product.price is not None else existing.price,
             rating=product.rating if product.rating is not None else existing.rating,
@@ -437,13 +441,108 @@ def _product_from_api_fields(
     return ListingProduct(
         product_id=product_id,
         url=url,
-        source=source_from_url(url),
-        title=title,
+        source=source_from_url(site_base),
+        title=_title_value(title),
         price=_float_value(price),
         rating=_float_value(rating),
         reviews=_digits(reviews),
         sold_count=_parse_sold(sold_count),
     )
+
+
+def _title_value(value) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    if isinstance(value, dict):
+        for key in ("displayTitle", "title", "seoTitle", "subject", "name"):
+            nested = _title_value(value.get(key))
+            if nested:
+                return nested
+    return None
+
+
+def _pick_sold(data: dict | None) -> int | None:
+    if not isinstance(data, dict):
+        return None
+    for key in (
+        "realTradeCount",
+        "real_trade_count",
+        "salesCount",
+        "tradeCount",
+        "sold",
+        "orders",
+        "tradeDesc",
+        "soldCount",
+        "itemSold",
+    ):
+        if key in data and data[key] is not None:
+            sold = _parse_sold(data[key])
+            if sold is not None:
+                return sold
+    for nest in ("trade", "sales", "trace"):
+        sub = data.get(nest)
+        if isinstance(sub, dict):
+            sold = _pick_sold(sub)
+            if sold is not None:
+                return sold
+            ut = sub.get("utLogMap")
+            if isinstance(ut, dict):
+                sold = _pick_sold(ut)
+                if sold is not None:
+                    return sold
+    return None
+
+
+def _pick_price(data: dict | None):
+    if not isinstance(data, dict):
+        return None
+    for key in ("salePrice", "price", "minPrice", "actSkuCalPrice", "skuVal"):
+        if key in data and data[key] is not None:
+            value = data[key]
+            if isinstance(value, dict):
+                for nested_key in ("value", "cent", "formattedPrice", "amount"):
+                    if nested_key in value:
+                        return value.get(nested_key)
+                return value.get("salePrice") or value.get("price")
+            return value
+    prices = data.get("prices")
+    if isinstance(prices, dict):
+        return _pick_price(prices)
+    return None
+
+
+def _iter_product_item_dicts(node, out: list[dict], *, depth: int = 0) -> None:
+    """Recursively collect list-card product dicts from nested AE payloads."""
+    if depth > 12:
+        return
+    if isinstance(node, dict):
+        content = node.get("content")
+        if (
+            isinstance(content, list)
+            and content
+            and isinstance(content[0], dict)
+            and any(
+                key in content[0]
+                for key in ("productId", "itemId", "evaluation", "trade", "productDetailUrl")
+            )
+        ):
+            out.extend(item for item in content if isinstance(item, dict))
+        products_v2 = node.get("productsV2")
+        if isinstance(products_v2, list):
+            out.extend(item for item in products_v2 if isinstance(item, dict))
+        item_list = node.get("itemList")
+        if isinstance(item_list, list):
+            out.extend(item for item in item_list if isinstance(item, dict))
+        for value in node.values():
+            if isinstance(value, (dict, list)):
+                _iter_product_item_dicts(value, out, depth=depth + 1)
+    elif isinstance(node, list):
+        for value in node:
+            if isinstance(value, (dict, list)):
+                _iter_product_item_dicts(value, out, depth=depth + 1)
 
 
 def _extract_products_from_payload(payload: dict, site_base: str) -> list[ListingProduct]:
@@ -479,53 +578,53 @@ def _extract_products_from_payload(payload: dict, site_base: str) -> list[Listin
                 product_id=product_id,
                 raw_url=pdp.get("url"),
                 site_base=site_base,
-                title=raw.get("title"),
+                title=_title_value(raw.get("title")),
                 price=price,
                 rating=rating or item_rating or pdp_rating,
                 reviews=reviews or item_reviews or pdp_reviews,
-                sold_count=raw.get("salesCount") or raw.get("tradeCount") or raw.get("orders"),
+                sold_count=_pick_sold(raw) or _pick_sold(item) or _pick_sold(pdp),
             )
             if product:
                 products.append(product)
 
-    result = data.get("result")
-    mods = data.get("mods")
-    if mods is None and isinstance(result, dict):
-        mods = result.get("mods")
-    if isinstance(mods, dict):
-        for item in mods.get("itemList", {}).get("content", []):
-            if isinstance(item, dict):
-                product = _product_from_recommend_item(item, site_base)
-                if product:
-                    products.append(product)
-
-    for item in data.get("itemList", []):
-        if isinstance(item, dict):
-            product = _product_from_recommend_item(item, site_base)
-            if product:
-                products.append(product)
+    raw_items: list[dict] = []
+    _iter_product_item_dicts(data, raw_items)
+    seen_ids: set[str] = set()
+    for item in raw_items:
+        product = _product_from_recommend_item(item, site_base)
+        if not product or product.product_id in seen_ids:
+            continue
+        seen_ids.add(product.product_id)
+        products.append(product)
 
     return products
 
 
 def _product_from_recommend_item(item: dict, site_base: str) -> ListingProduct | None:
     product_id = str(item.get("productId") or item.get("itemId") or item.get("id") or "")
-    if not product_id:
+    if not product_id or product_id == "0":
         return None
-    raw_url = item.get("productUrl") or item.get("itemUrl") or item.get("detailUrl")
+    raw_url = (
+        item.get("productDetailUrl")
+        or item.get("productUrl")
+        or item.get("itemUrl")
+        or item.get("detailUrl")
+    )
     rating, reviews = _pick_rating_reviews(item)
+    ut = item.get("trace", {}).get("utLogMap") if isinstance(item.get("trace"), dict) else None
+    if isinstance(ut, dict):
+        ut_rating, ut_reviews = _pick_rating_reviews(ut)
+        rating = rating or ut_rating or _float_value(ut.get("star_rating"))
+        reviews = reviews or ut_reviews
     return _product_from_api_fields(
         product_id=product_id,
         raw_url=str(raw_url) if raw_url else None,
         site_base=site_base,
-        title=item.get("title") or item.get("subject"),
-        price=item.get("salePrice") or item.get("price"),
-        rating=rating
-        or item.get("evaluationRate")
-        or item.get("starRating")
-        or item.get("rating"),
-        reviews=reviews or item.get("reviewCount") or item.get("feedbackCount"),
-        sold_count=item.get("tradeCount") or item.get("orders") or item.get("sold"),
+        title=_title_value(item.get("title") or item.get("subject") or item.get("productTitle")),
+        price=_pick_price(item),
+        rating=rating,
+        reviews=reviews,
+        sold_count=_pick_sold(item),
     )
 
 
@@ -559,32 +658,36 @@ class ElasticsearchUrlWriter:
             return
 
         now = utc_now_iso()
-        body: dict = {
+        fields: dict = {
             "source": product.source,
             "product_id": product.product_id,
             "url": product.url,
             "category": category_name,
             "scraped_at": now,
-            "created_at": now,
             "updated_at": now,
         }
         if product.title:
-            body["title"] = product.title
+            fields["title"] = product.title
         if product.price is not None:
-            body["price"] = product.price
+            fields["price"] = product.price
+        # Overwrite metric fields when this crawl captured them.
         if product.rating is not None:
-            body["rating"] = product.rating
+            fields["rating"] = product.rating
         if product.reviews is not None:
-            body["reviews"] = product.reviews
+            fields["reviews"] = product.reviews
         if product.sold_count is not None:
-            body["sold_count"] = product.sold_count
+            fields["sold_count"] = product.sold_count
+
+        upsert = dict(fields)
+        upsert["created_at"] = now
 
         self.buffer.append(
             {
                 "_index": self.index,
                 "_id": product.dedupe_key,
-                "_op_type": "index",
-                "_source": body,
+                "_op_type": "update",
+                "doc": fields,
+                "upsert": upsert,
             }
         )
         if len(self.buffer) >= self.chunk_size:
@@ -1036,7 +1139,7 @@ async def extract_products(page: Page, site_base: str, collector: ListingCollect
             ListingProduct(
                 product_id=product_id,
                 url=url,
-                source=source_from_url(url),
+                source=source_from_url(site_base),
                 title=item.get("title") or None,
                 price=_float_value(item.get("price")),
                 rating=_float_value(item.get("rating")),
@@ -1222,12 +1325,16 @@ def save_new_products(
     category_name: str,
     es_writer: ElasticsearchUrlWriter | None = None,
 ) -> int:
+    """Append new URLs locally; always upsert ES so recrawls overwrite metrics."""
     new_count = 0
     LINKS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with LINKS_FILE.open("a", encoding="utf-8") as links_fh, PRODUCTS_JSONL.open(
         "a", encoding="utf-8"
     ) as jsonl_fh:
         for product in products:
+            if es_writer is not None:
+                es_writer.write(product, category_name)
+
             if product.dedupe_key in seen_keys or product.url in seen_keys:
                 continue
             seen_keys.add(product.dedupe_key)
@@ -1246,8 +1353,6 @@ def save_new_products(
                 "scraped_at": utc_now_iso(),
             }
             jsonl_fh.write(json.dumps(record, ensure_ascii=False) + "\n")
-            if es_writer is not None:
-                es_writer.write(product, category_name)
             new_count += 1
     return new_count
 
@@ -1263,6 +1368,8 @@ async def crawl_infinite_scroll(
     """Scroll until consecutive rounds yield no new product IDs."""
     total_new = 0
     seen_ids: set[str] = set()
+    enriched_ids: set[str] = set()
+    metrics_by_id: dict[str, ListingProduct] = {}
     consecutive_dup = 0
     round_no = 0
 
@@ -1281,15 +1388,50 @@ async def crawl_infinite_scroll(
 
         await handle_captcha(page)
         products = await extract_products(page, site_base, collector)
+
+        # Re-apply metrics gathered earlier this category run (esp. feedback enrich).
+        restored: list[ListingProduct] = []
+        for product in products:
+            cached = metrics_by_id.get(product.product_id)
+            if cached is None:
+                restored.append(product)
+                continue
+            restored.append(
+                ListingProduct(
+                    product_id=product.product_id,
+                    url=product.url or cached.url,
+                    source=product.source or cached.source,
+                    title=product.title or cached.title,
+                    price=product.price if product.price is not None else cached.price,
+                    rating=product.rating if product.rating is not None else cached.rating,
+                    reviews=product.reviews if product.reviews is not None else cached.reviews,
+                    sold_count=(
+                        product.sold_count
+                        if product.sold_count is not None
+                        else cached.sold_count
+                    ),
+                )
+            )
+        products = restored
+
         current_ids = {p.product_id for p in products}
         fresh = current_ids - seen_ids
 
         if ENRICH_MODE == "all":
             await enrich_rating_reviews(page, products)
-        elif ENRICH_MODE == "new" and fresh:
-            await enrich_rating_reviews(
-                page, [p for p in products if p.product_id in fresh]
-            )
+        elif ENRICH_MODE == "new":
+            pending = [
+                p
+                for p in products
+                if p.product_id not in enriched_ids
+                and (p.rating is None or p.reviews is None)
+            ]
+            if pending:
+                await enrich_rating_reviews(page, pending)
+                enriched_ids.update(p.product_id for p in pending)
+
+        for product in products:
+            metrics_by_id[product.product_id] = product
 
         new_count = save_new_products(products, seen_links, category_name, es_writer)
         if es_writer is not None:
