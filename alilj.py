@@ -704,6 +704,20 @@ def _product_from_recommend_item(item: dict, site_base: str) -> ListingProduct |
     )
 
 
+def _product_es_fingerprint(product: ListingProduct, category_name: str) -> tuple:
+    """Compare payload meaningfully — skip ES re-upsert when unchanged."""
+    return (
+        product.dedupe_key,
+        category_name,
+        product.url,
+        product.title,
+        product.price,
+        product.rating,
+        product.reviews,
+        product.sold_count,
+    )
+
+
 class ElasticsearchUrlWriter:
     def __init__(self) -> None:
         load_dotenv(BASE_DIR / ".env")
@@ -716,7 +730,10 @@ class ElasticsearchUrlWriter:
         self.buffer: list[dict] = []
         self.saved = 0
         self.failed = 0
+        self.skipped = 0
         self._lock = threading.Lock()
+        # Per-run cache: same doc fingerprint → do not bulk again.
+        self._written_fp: dict[str, tuple] = {}
 
         if not self.enabled:
             print("未配置 Elasticsearch，仅写入本地文件。")
@@ -734,31 +751,36 @@ class ElasticsearchUrlWriter:
         if not self.enabled or self.client is None:
             return
 
-        now = utc_now_iso()
-        fields: dict = {
-            "source": product.source,
-            "product_id": product.product_id,
-            "url": product.url,
-            "category": category_name,
-            "scraped_at": now,
-            "updated_at": now,
-        }
-        if product.title:
-            fields["title"] = product.title
-        if product.price is not None:
-            fields["price"] = product.price
-        # Overwrite metric fields when this crawl captured them.
-        if product.rating is not None:
-            fields["rating"] = product.rating
-        if product.reviews is not None:
-            fields["reviews"] = product.reviews
-        if product.sold_count is not None:
-            fields["sold_count"] = product.sold_count
-
-        upsert = dict(fields)
-        upsert["created_at"] = now
-
+        fingerprint = _product_es_fingerprint(product, category_name)
         with self._lock:
+            if self._written_fp.get(product.dedupe_key) == fingerprint:
+                self.skipped += 1
+                return
+
+            now = utc_now_iso()
+            fields: dict = {
+                "source": product.source,
+                "product_id": product.product_id,
+                "url": product.url,
+                "category": category_name,
+                "scraped_at": now,
+                "updated_at": now,
+            }
+            if product.title:
+                fields["title"] = product.title
+            if product.price is not None:
+                fields["price"] = product.price
+            # Overwrite metric fields when this crawl captured them.
+            if product.rating is not None:
+                fields["rating"] = product.rating
+            if product.reviews is not None:
+                fields["reviews"] = product.reviews
+            if product.sold_count is not None:
+                fields["sold_count"] = product.sold_count
+
+            upsert = dict(fields)
+            upsert["created_at"] = now
+
             self.buffer.append(
                 {
                     "_index": self.index,
@@ -768,6 +790,7 @@ class ElasticsearchUrlWriter:
                     "upsert": upsert,
                 }
             )
+            self._written_fp[product.dedupe_key] = fingerprint
             if len(self.buffer) >= self.chunk_size:
                 self._flush_unlocked()
 
@@ -1224,26 +1247,117 @@ def is_calp_url(url: str) -> bool:
     return "/p/calp-plus/" in url or "categoryTab=" in url
 
 
+async def _scroll_by_smooth(page: Page, delta_y: int, *, steps: int | None = None) -> None:
+    """Ease-in-out scroll curve (more human than a single scrollBy jump)."""
+    if page.is_closed() or delta_y == 0:
+        return
+    distance = abs(int(delta_y))
+    direction = 1 if delta_y > 0 else -1
+    step_n = steps if steps is not None else max(6, min(18, distance // 80))
+    # Ease-in-out weights so early/late steps are smaller.
+    weights = []
+    for i in range(step_n):
+        t = (i + 0.5) / step_n
+        # Smoothstep curve.
+        ease = t * t * (3 - 2 * t)
+        prev = ((i) / step_n)
+        prev_ease = prev * prev * (3 - 2 * prev)
+        weights.append(max(0.01, ease - prev_ease))
+    total_w = sum(weights) or 1.0
+    moved = 0
+    for i, w in enumerate(weights):
+        chunk = int(round(distance * (w / total_w)))
+        if i == step_n - 1:
+            chunk = distance - moved
+        if chunk <= 0:
+            continue
+        moved += chunk
+        try:
+            await page.evaluate("(dy) => window.scrollBy(0, dy)", chunk * direction)
+        except Exception as exc:
+            if is_browser_dead(exc, page=page):
+                raise
+            return
+        await page.wait_for_timeout(random.randint(18, 55))
+
+
+async def _page_scroll_metrics(page: Page) -> tuple[float, float, float]:
+    """Return scrollY, viewportHeight, scrollHeight."""
+    data = await page.evaluate(
+        """() => ({
+          y: window.scrollY || document.documentElement.scrollTop || 0,
+          vh: window.innerHeight || 800,
+          sh: Math.max(
+            document.body ? document.body.scrollHeight : 0,
+            document.documentElement ? document.documentElement.scrollHeight : 0
+          ),
+        })"""
+    )
+    return float(data["y"]), float(data["vh"]), float(data["sh"])
+
+
 async def scroll_listing_page(page: Page) -> None:
-    """One user-like scroll step; prefer waiting for list API over fixed delay."""
+    """Human-like scroll: curved downs, occasional ups, bounce near bottom."""
     await dismiss_popups(page)
     try:
-        async with page.expect_response(is_list_api_response, timeout=SCROLL_API_TIMEOUT_MS):
-            await page.evaluate(
-                "window.scrollBy(0, Math.max(1000, window.innerHeight * 0.9))"
-            )
+        y, vh, sh = await _page_scroll_metrics(page)
+    except Exception as exc:
+        if is_browser_dead(exc, page=page):
+            raise
+        y, vh, sh = 0.0, 800.0, 3000.0
+
+    remaining = max(0.0, sh - (y + vh))
+    near_bottom = remaining < max(240.0, vh * 0.35)
+
+    async def do_gesture() -> None:
+        if near_bottom:
+            # Bounce: scroll up a bit, pause, then continue down past previous bottom.
+            up = -int(vh * random.uniform(0.25, 0.65) + random.randint(80, 220))
+            await _scroll_by_smooth(page, up)
+            await page.wait_for_timeout(random.randint(280, 700))
+            down = int(vh * random.uniform(0.85, 1.45) + random.randint(200, 500))
+            await _scroll_by_smooth(page, down)
+            return
+
+        # Main downward read, sometimes with a small digression upward.
+        if random.random() < 0.28:
+            nudge_up = -int(vh * random.uniform(0.08, 0.28) + random.randint(40, 120))
+            await _scroll_by_smooth(page, nudge_up, steps=random.randint(4, 8))
+            await page.wait_for_timeout(random.randint(120, 380))
+
+        down = int(vh * random.uniform(0.55, 1.05) + random.randint(180, 520))
+        # Avoid always jumping a full viewport; vary pace.
+        await _scroll_by_smooth(page, down)
+
+        if random.random() < 0.18:
+            await page.wait_for_timeout(random.randint(150, 420))
+            micro = int(random.choice([-1, 1]) * random.randint(60, 180))
+            await _scroll_by_smooth(page, micro, steps=random.randint(3, 6))
+
+    # Human gestures take longer than a single jump; give the list API more time.
+    api_timeout = SCROLL_API_TIMEOUT_MS + (5000 if near_bottom else 2500)
+    try:
+        async with page.expect_response(is_list_api_response, timeout=api_timeout):
+            await do_gesture()
         if SCROLL_AFTER_API_MS > 0:
-            await page.wait_for_timeout(SCROLL_AFTER_API_MS)
+            await page.wait_for_timeout(SCROLL_AFTER_API_MS + random.randint(0, 200))
         return
     except Exception as exc:
         if is_browser_dead(exc, page=page):
             raise
-        # Timeout：滚动多半已完成且已等过 SCROLL_API_TIMEOUT_MS，无需再叠长等待。
         name = type(exc).__name__
         if "Timeout" in name:
+            # Gesture already ran; short human pause instead of another hard jump.
+            await page.wait_for_timeout(random.randint(180, 450))
             return
+        # Gesture may not have run if expect_response failed early — still scroll.
+        try:
+            await do_gesture()
+        except Exception as inner:
+            if is_browser_dead(inner, page=page):
+                raise
     if SCROLL_FALLBACK_MS > 0:
-        await page.wait_for_timeout(SCROLL_FALLBACK_MS)
+        await page.wait_for_timeout(SCROLL_FALLBACK_MS + random.randint(0, 250))
 
 
 async def _enrich_one_product(page: Page, product: ListingProduct) -> None:
@@ -1585,7 +1699,12 @@ def save_new_products(
     category_name: str,
     es_writer: ElasticsearchUrlWriter | None = None,
 ) -> int:
-    """Append new URLs locally; always upsert ES so recrawls overwrite metrics."""
+    """Append new URLs locally; ES upsert only when doc fingerprint changes.
+
+    Previously every scroll round re-upserted all visible cards (same _id), which
+    flooded logs with "已写入 ES N 条" even when new_count was 0. Writer now skips
+    unchanged fingerprints; enrich/metric improvements still rewrite once.
+    """
     new_count = 0
     LINKS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with FILE_IO_LOCK:
@@ -2125,7 +2244,10 @@ async def main_async() -> None:
     print(f"列表文件: {PRODUCTS_JSONL}")
     if es_writer.enabled:
         print(f"ES 索引: {es_writer.index}")
-        print(f"ES 本次写入: {es_writer.saved}，失败: {es_writer.failed}")
+        print(
+            f"ES 本次写入: {es_writer.saved}，失败: {es_writer.failed}，"
+            f"跳过未变化: {es_writer.skipped}"
+        )
 
 
 def main() -> None:

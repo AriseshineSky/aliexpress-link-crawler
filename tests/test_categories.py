@@ -15,6 +15,8 @@ sys.path.insert(0, str(ROOT))
 
 import alilj  # noqa: E402
 from alilj import (  # noqa: E402
+    ElasticsearchUrlWriter,
+    ListingProduct,
     category_path_depth,
     is_calp_url,
     is_login_url,
@@ -140,6 +142,53 @@ class CategoryConfigTests(unittest.TestCase):
         self.assertGreaterEqual(len(raw["categories"]), 20)
         self.assertTrue(all(c["url"].startswith("https://www.aliexpress.us/") for c in raw["categories"]))
         self.assertTrue(all("calp-plus" in c["url"] for c in raw["categories"]))
+
+
+class ElasticsearchDedupeTests(unittest.TestCase):
+    def test_skips_unchanged_fingerprint(self) -> None:
+        writer = ElasticsearchUrlWriter.__new__(ElasticsearchUrlWriter)
+        writer.enabled = True
+        writer.client = object()  # truthy sentinel; write exits before network if skipped
+        writer.index = "test-index"
+        writer.chunk_size = 1000
+        writer.buffer = []
+        writer.saved = 0
+        writer.failed = 0
+        writer.skipped = 0
+        writer._lock = __import__("threading").Lock()
+        writer._written_fp = {}
+
+        product = ListingProduct(
+            product_id="123",
+            url="https://www.aliexpress.us/item/123.html",
+            source="aliexpress.us",
+            title="Widget",
+            price=9.9,
+            rating=4.8,
+            reviews=100,
+            sold_count=50,
+        )
+        writer.write(product, "US / Toys")
+        self.assertEqual(len(writer.buffer), 1)
+        self.assertEqual(writer.skipped, 0)
+
+        writer.write(product, "US / Toys")
+        self.assertEqual(len(writer.buffer), 1)
+        self.assertEqual(writer.skipped, 1)
+
+        richer = ListingProduct(
+            product_id="123",
+            url=product.url,
+            source=product.source,
+            title=product.title,
+            price=product.price,
+            rating=4.9,
+            reviews=120,
+            sold_count=50,
+        )
+        writer.write(richer, "US / Toys")
+        self.assertEqual(len(writer.buffer), 2)
+        self.assertEqual(writer.skipped, 1)
 
 
 if __name__ == "__main__":
