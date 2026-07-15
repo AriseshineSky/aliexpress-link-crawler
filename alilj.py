@@ -6,6 +6,7 @@ AliExpress 商品链接抓取（alilj.py）。
 首页分类入口为 /p/calp-plus/?categoryTab=...，商品靠无限下滑加载（非 ?page=N）。
 默认只抓 aliexpress.us；支持 calp 子类目点击、滑块验证码自动拖动 + 手动兜底。
 默认偏提速：短间隔、滚动等列表 API、feedback 补全新商品评分、calp 页内点子类。
+多 worker 并行：分类入队，CRAWL_WORKERS 个独立浏览器各自领取类目。
 输出：产品链接.txt、产品列表.jsonl、Elasticsearch（ELASTICSEARCH_INDEX_URLS）
 """
 
@@ -16,6 +17,7 @@ import json
 import os
 import random
 import re
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -53,10 +55,13 @@ ENRICH_CONCURRENCY = 8
 ENRICH_DELAY_MS = 30
 GOTO_MAX_RETRIES = 5
 GOTO_RETRY_BASE_DELAY_S = 5
+CRAWL_WORKERS = 2  # 并行 worker 数；每个 worker 独立浏览器，从队列领取分类
 # 打开分类/列表页时附加的 URL 过滤（与站内 selectedSwitches / minPrice / maxPrice 一致）
 LISTING_MAX_PRICE = "99"  # 空字符串 = 不加价格上限
 LISTING_MIN_PRICE = ""  # 空字符串 = 不加价格下限
 LISTING_STAR_FILTER = "4StarRating"  # 空字符串 = 不加星级开关；例: 4StarRating
+# Serialize local file + shared seen_links updates across workers.
+FILE_IO_LOCK = threading.Lock()
 
 LIST_API_URL_MARKERS = (
     "aer-webapi/v1/search",
@@ -111,6 +116,8 @@ if (min_price := os.getenv("LISTING_MIN_PRICE")) is not None:
     LISTING_MIN_PRICE = min_price.strip()
 if (star_filter := os.getenv("LISTING_STAR_FILTER")) is not None:
     LISTING_STAR_FILTER = star_filter.strip()
+if crawl_workers := (os.getenv("CRAWL_WORKERS") or "").strip():
+    CRAWL_WORKERS = max(1, int(crawl_workers))
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -690,6 +697,7 @@ class ElasticsearchUrlWriter:
         self.buffer: list[dict] = []
         self.saved = 0
         self.failed = 0
+        self._lock = threading.Lock()
 
         if not self.enabled:
             print("未配置 Elasticsearch，仅写入本地文件。")
@@ -731,23 +739,29 @@ class ElasticsearchUrlWriter:
         upsert = dict(fields)
         upsert["created_at"] = now
 
-        self.buffer.append(
-            {
-                "_index": self.index,
-                "_id": product.dedupe_key,
-                "_op_type": "update",
-                "doc": fields,
-                "upsert": upsert,
-            }
-        )
-        if len(self.buffer) >= self.chunk_size:
-            self.flush()
+        with self._lock:
+            self.buffer.append(
+                {
+                    "_index": self.index,
+                    "_id": product.dedupe_key,
+                    "_op_type": "update",
+                    "doc": fields,
+                    "upsert": upsert,
+                }
+            )
+            if len(self.buffer) >= self.chunk_size:
+                self._flush_unlocked()
 
     def flush(self) -> None:
+        with self._lock:
+            self._flush_unlocked()
+
+    def _flush_unlocked(self) -> None:
         if not self.enabled or self.client is None or not self.buffer:
             return
 
         batch = self.buffer
+        self.buffer = []
         try:
             success_count, errors = helpers.bulk(
                 self.client,
@@ -756,7 +770,6 @@ class ElasticsearchUrlWriter:
             )
         except Exception as exc:
             self.failed += len(batch)
-            self.buffer.clear()
             print(f"ES bulk 失败（已跳过 {len(batch)} 条）：{exc}")
             return
         failed_count = len(errors) if isinstance(errors, list) else 0
@@ -766,12 +779,13 @@ class ElasticsearchUrlWriter:
             print(f"ES bulk 失败 {failed_count} 条，首条错误: {errors[0]}")
         else:
             print(f"已写入 ES {int(success_count)} 条 -> {self.index}")
-        self.buffer.clear()
 
     def close(self) -> None:
         self.flush()
-        if self.client is not None:
-            self.client.close()
+        with self._lock:
+            if self.client is not None:
+                self.client.close()
+                self.client = None
 
 
 def with_listing_filters(url: str) -> str:
@@ -1404,33 +1418,45 @@ def save_new_products(
     """Append new URLs locally; always upsert ES so recrawls overwrite metrics."""
     new_count = 0
     LINKS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with LINKS_FILE.open("a", encoding="utf-8") as links_fh, PRODUCTS_JSONL.open(
-        "a", encoding="utf-8"
-    ) as jsonl_fh:
-        for product in products:
-            if es_writer is not None:
-                es_writer.write(product, category_name)
+    with FILE_IO_LOCK:
+        with LINKS_FILE.open("a", encoding="utf-8") as links_fh, PRODUCTS_JSONL.open(
+            "a", encoding="utf-8"
+        ) as jsonl_fh:
+            for product in products:
+                if es_writer is not None:
+                    es_writer.write(product, category_name)
 
-            if product.dedupe_key in seen_keys or product.url in seen_keys:
-                continue
-            seen_keys.add(product.dedupe_key)
-            seen_keys.add(product.url)
-            links_fh.write(product.url + "\n")
-            record = {
-                "source": product.source,
-                "product_id": product.product_id,
-                "url": product.url,
-                "category": category_name,
-                "title": product.title,
-                "price": product.price,
-                "rating": product.rating,
-                "reviews": product.reviews,
-                "sold_count": product.sold_count,
-                "scraped_at": utc_now_iso(),
-            }
-            jsonl_fh.write(json.dumps(record, ensure_ascii=False) + "\n")
-            new_count += 1
+                if product.dedupe_key in seen_keys or product.url in seen_keys:
+                    continue
+                seen_keys.add(product.dedupe_key)
+                seen_keys.add(product.url)
+                links_fh.write(product.url + "\n")
+                record = {
+                    "source": product.source,
+                    "product_id": product.product_id,
+                    "url": product.url,
+                    "category": category_name,
+                    "title": product.title,
+                    "price": product.price,
+                    "rating": product.rating,
+                    "reviews": product.reviews,
+                    "sold_count": product.sold_count,
+                    "scraped_at": utc_now_iso(),
+                }
+                jsonl_fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+                new_count += 1
     return new_count
+
+
+def worker_log(worker_id: int, message: str) -> None:
+    print(f"[W{worker_id}] {message}")
+
+
+def worker_user_data_dir(worker_id: int) -> Path:
+    # Keep worker-0 on the legacy profile so existing cookies still apply.
+    if CRAWL_WORKERS <= 1 or worker_id <= 0:
+        return USER_DATA_DIR
+    return USER_DATA_DIR / f"worker-{worker_id}"
 
 
 async def crawl_infinite_scroll(
@@ -1570,12 +1596,13 @@ async def crawl_category(
     seen_links: set[str],
     collector: ListingCollector,
     es_writer: ElasticsearchUrlWriter | None = None,
+    worker_id: int = 0,
 ) -> int:
     total_new = 0
     category_url = with_listing_filters(category_url)
     site_base = site_base_from_url(category_url)
-    print(f"\n类目：{category_name}")
-    print(f"打开：{category_url}")
+    worker_log(worker_id, f"类目：{category_name}")
+    worker_log(worker_id, f"打开：{category_url}")
 
     collector.clear()
     await safe_goto(page, category_url)
@@ -1601,22 +1628,25 @@ async def crawl_category(
             await page.wait_for_timeout(800)
             lv3_names = await list_calp_lv3_names(page)
         if lv3_names:
-            print(f"发现 {len(lv3_names)} 个 calp 子类目图标：{category_name}")
+            worker_log(
+                worker_id,
+                f"发现 {len(lv3_names)} 个 calp 子类目图标：{category_name}",
+            )
         for sub_name in lv3_names:
             target_name = f"{category_name} > {sub_name}"
-            print(f"\n子类目（点击）：{target_name}")
+            worker_log(worker_id, f"子类目（点击）：{target_name}")
             if CALP_RELOAD_EACH_LV3:
                 await safe_goto(page, category_url)
                 await dismiss_popups(page)
                 await handle_captcha(page)
                 await page.wait_for_timeout(500)
                 if not await click_calp_lv3(page, sub_name):
-                    print(f"未能点击子类目：{sub_name}")
+                    worker_log(worker_id, f"未能点击子类目：{sub_name}")
                     continue
                 if CALP_CLICK_SETTLE_MS > 0:
                     await page.wait_for_timeout(CALP_CLICK_SETTLE_MS)
             elif not await _prepare_calp_lv3(page, category_url, sub_name):
-                print(f"未能点击子类目：{sub_name}")
+                worker_log(worker_id, f"未能点击子类目：{sub_name}")
                 continue
             collector.clear()
             total_new += await crawl_infinite_scroll(
@@ -1625,7 +1655,7 @@ async def crawl_category(
 
     elif (not is_calp_url(category_url)) and " > " not in category_name:
         wholesale = wholesale_search_url(category_name, site_base)
-        print(f"\n附加批发搜索：{wholesale}")
+        worker_log(worker_id, f"附加批发搜索：{wholesale}")
         collector.clear()
         await safe_goto(page, wholesale)
         await dismiss_popups(page)
@@ -1637,11 +1667,14 @@ async def crawl_category(
     return total_new
 
 
-async def create_browser(playwright) -> tuple[BrowserContext, Page, ListingCollector]:
-    USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
+async def create_browser(
+    playwright, worker_id: int = 0
+) -> tuple[BrowserContext, Page, ListingCollector]:
+    profile_dir = worker_user_data_dir(worker_id)
+    profile_dir.mkdir(parents=True, exist_ok=True)
     collector = ListingCollector()
     context = await playwright.chromium.launch_persistent_context(
-        user_data_dir=str(USER_DATA_DIR),
+        user_data_dir=str(profile_dir),
         headless=HEADLESS,
         user_agent=USER_AGENT,
         locale="en-US",
@@ -1669,12 +1702,131 @@ async def close_browser(context: BrowserContext | None) -> None:
         pass
 
 
+async def process_category_seed(
+    playwright,
+    worker_id: int,
+    category_name: str,
+    category_url: str,
+    seen_links: set[str],
+    es_writer: ElasticsearchUrlWriter,
+) -> int:
+    """Discover classic subcats (if needed) and crawl one seed category tree."""
+    total_new = 0
+    context: BrowserContext | None = None
+    page: Page | None = None
+    collector: ListingCollector | None = None
+    targets = [(category_name, category_url)]
+
+    try:
+        # Classic /category/ seeds still auto-discover linked subcats.
+        # Calp-plus lv3 icons are clicked inside crawl_category.
+        if (
+            CRAWL_SUBCATEGORIES
+            and not is_calp_url(category_url)
+            and category_path_depth(category_name) < 3
+        ):
+            for attempt in range(2):
+                try:
+                    if context is None or page is None or page.is_closed():
+                        await close_browser(context)
+                        context, page, collector = await create_browser(
+                            playwright, worker_id
+                        )
+                    subs = await discover_all_subcategories(
+                        page, category_name, category_url
+                    )
+                    if subs:
+                        worker_log(
+                            worker_id,
+                            f"发现 {len(subs)} 个子类目（含多级）：{category_name}",
+                        )
+                        targets.extend(subs)
+                    break
+                except Exception as exc:
+                    if is_browser_dead(exc, page=page) and attempt == 0:
+                        worker_log(worker_id, f"子类目发现时浏览器异常，重启：{exc}")
+                        await close_browser(context)
+                        context, page, collector = None, None, None
+                        await asyncio.sleep(3)
+                        continue
+                    worker_log(worker_id, f"子类目发现失败 {category_name}: {exc}")
+                    break
+
+        for target_name, target_url in targets:
+            for attempt in range(2):
+                try:
+                    if context is None or page is None or page.is_closed():
+                        await close_browser(context)
+                        context, page, collector = await create_browser(
+                            playwright, worker_id
+                        )
+                    assert collector is not None
+                    total_new += await crawl_category(
+                        page,
+                        target_name,
+                        target_url,
+                        seen_links,
+                        collector,
+                        es_writer,
+                        worker_id=worker_id,
+                    )
+                    break
+                except Exception as exc:
+                    if is_browser_dead(exc, page=page) and attempt == 0:
+                        worker_log(worker_id, f"抓取时浏览器异常，重启：{exc}")
+                        await close_browser(context)
+                        context, page, collector = None, None, None
+                        await asyncio.sleep(3)
+                        continue
+                    raise
+    finally:
+        await close_browser(context)
+
+    return total_new
+
+
+async def crawl_worker(
+    playwright,
+    worker_id: int,
+    category_queue: asyncio.Queue[tuple[str, str] | None],
+    seen_links: set[str],
+    es_writer: ElasticsearchUrlWriter,
+) -> int:
+    total_new = 0
+    worker_log(
+        worker_id,
+        f"启动，浏览器目录: {worker_user_data_dir(worker_id)}",
+    )
+    while True:
+        item = await category_queue.get()
+        try:
+            if item is None:
+                return total_new
+            category_name, category_url = item
+            worker_log(worker_id, f"领取类目：{category_name}")
+            total_new += await process_category_seed(
+                playwright,
+                worker_id,
+                category_name,
+                category_url,
+                seen_links,
+                es_writer,
+            )
+            worker_log(worker_id, f"完成类目：{category_name}（累计新增 {total_new}）")
+        finally:
+            category_queue.task_done()
+
+
 async def main_async() -> None:
     categories = load_categories()
+    workers = min(CRAWL_WORKERS, max(1, len(categories)))
     print("=" * 60)
     print("AliExpress 商品链接抓取 (alilj.py)")
     print("=" * 60)
+    print(f"并行 worker: {workers}")
     print(f"浏览器状态目录: {USER_DATA_DIR}")
+    if workers > 1:
+        print(f"  worker-0 -> {USER_DATA_DIR.name}/，其余 -> worker-1…worker-{workers - 1}/")
     print(f"商品链接文件: {LINKS_FILE}")
     print(f"商品列表文件: {PRODUCTS_JSONL}")
     print(f"类目数量: {len(categories)}（US）")
@@ -1702,71 +1854,27 @@ async def main_async() -> None:
     print()
 
     seen_links = load_seen_links()
-    total_new = 0
     es_writer = ElasticsearchUrlWriter()
+    category_queue: asyncio.Queue[tuple[str, str] | None] = asyncio.Queue()
+    for item in categories:
+        await category_queue.put(item)
+    for _ in range(workers):
+        await category_queue.put(None)
 
     async with async_playwright() as playwright:
-        context: BrowserContext | None = None
-        page: Page | None = None
-        collector: ListingCollector | None = None
-        try:
-            for category_name, category_url in categories:
-                targets = [(category_name, category_url)]
-                # Classic /category/ seeds still auto-discover linked subcats.
-                # Calp-plus lv3 icons are clicked inside crawl_category.
-                if (
-                    CRAWL_SUBCATEGORIES
-                    and not is_calp_url(category_url)
-                    and category_path_depth(category_name) < 3
-                ):
-                    for attempt in range(2):
-                        try:
-                            if context is None or page is None or page.is_closed():
-                                await close_browser(context)
-                                context, page, collector = await create_browser(playwright)
-                            subs = await discover_all_subcategories(
-                                page, category_name, category_url
-                            )
-                            if subs:
-                                print(
-                                    f"发现 {len(subs)} 个子类目（含多级）：{category_name}"
-                                )
-                                targets.extend(subs)
-                            break
-                        except Exception as exc:
-                            if is_browser_dead(exc, page=page) and attempt == 0:
-                                print(f"子类目发现时浏览器异常，重启：{exc}")
-                                await close_browser(context)
-                                context, page, collector = None, None, None
-                                await asyncio.sleep(3)
-                                continue
-                            print(f"子类目发现失败 {category_name}: {exc}")
-                            break
-
-                for target_name, target_url in targets:
-                    for attempt in range(2):
-                        try:
-                            if context is None or page is None or page.is_closed():
-                                await close_browser(context)
-                                context, page, collector = await create_browser(playwright)
-                            assert collector is not None
-                            total_new += await crawl_category(
-                                page, target_name, target_url, seen_links, collector, es_writer
-                            )
-                            break
-                        except Exception as exc:
-                            if is_browser_dead(exc, page=page) and attempt == 0:
-                                print(f"抓取时浏览器异常，重启：{exc}")
-                                await close_browser(context)
-                                context, page, collector = None, None, None
-                                await asyncio.sleep(3)
-                                continue
-                            raise
-        finally:
-            await close_browser(context)
-            es_writer.close()
+        results = await asyncio.gather(
+            *[
+                crawl_worker(
+                    playwright, worker_id, category_queue, seen_links, es_writer
+                )
+                for worker_id in range(workers)
+            ]
+        )
+    es_writer.close()
+    total_new = sum(results)
 
     print("\n完成。")
+    print(f"并行 worker: {workers}")
     print(f"累计商品数: {len(seen_links)}")
     print(f"本次新增: {total_new}")
     print(f"链接文件: {LINKS_FILE}")

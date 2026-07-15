@@ -18,7 +18,10 @@ pkill -f "$ROOT/.venv/bin/python.*alilj.py" 2>/dev/null || true
 pkill -f "$ROOT/.venv/bin/python -m aliexpress_spider crawl" 2>/dev/null || true
 pkill -f "$ROOT/browser" 2>/dev/null || true
 sleep 2
-rm -f "$ROOT/browser/SingletonLock" "$ROOT/browser/SingletonSocket" "$ROOT/browser/SingletonCookie" 2>/dev/null || true
+# Clear Chromium singleton locks for default + worker-* profiles
+find "$ROOT/browser" -maxdepth 2 \( \
+  -name 'SingletonLock' -o -name 'SingletonSocket' -o -name 'SingletonCookie' \
+\) -delete 2>/dev/null || true
 
 cd "$ROOT"
 exec "$ROOT/.venv/bin/python" -u "$ROOT/alilj.py" "$@"

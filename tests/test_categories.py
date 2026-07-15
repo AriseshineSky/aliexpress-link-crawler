@@ -13,12 +13,14 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import alilj  # noqa: E402
 from alilj import (  # noqa: E402
     category_path_depth,
     is_calp_url,
     load_categories,
     wholesale_search_url,
     with_listing_filters,
+    worker_user_data_dir,
 )
 
 CATEGORY_URL_RE = re.compile(
@@ -50,6 +52,20 @@ class CategoryConfigTests(unittest.TestCase):
         self.assertIn("SortType=total_tranpro_desc", url)
         self.assertIn("maxPrice=99", url)
         self.assertIn("selectedSwitches=filterCode%3A4StarRating", url)
+
+    def test_worker_user_data_dir(self) -> None:
+        old = alilj.CRAWL_WORKERS
+        try:
+            alilj.CRAWL_WORKERS = 1
+            self.assertEqual(worker_user_data_dir(0), alilj.USER_DATA_DIR)
+            alilj.CRAWL_WORKERS = 3
+            self.assertEqual(worker_user_data_dir(0), alilj.USER_DATA_DIR)
+            self.assertEqual(
+                worker_user_data_dir(1),
+                alilj.USER_DATA_DIR / "worker-1",
+            )
+        finally:
+            alilj.CRAWL_WORKERS = old
 
     def test_category_path_depth(self) -> None:
         self.assertEqual(category_path_depth("US / Shoes"), 1)
