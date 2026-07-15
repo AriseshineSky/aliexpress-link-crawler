@@ -13,7 +13,13 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from alilj import category_path_depth, is_calp_url, load_categories  # noqa: E402
+from alilj import (  # noqa: E402
+    category_path_depth,
+    is_calp_url,
+    load_categories,
+    wholesale_search_url,
+    with_listing_filters,
+)
 
 CATEGORY_URL_RE = re.compile(
     r"^https://www\.aliexpress\.us/p/calp-plus/index\.html\?categoryTab=.+$"
@@ -28,6 +34,22 @@ class CategoryConfigTests(unittest.TestCase):
     def tearDown(self) -> None:
         if self._old_es_cats is not None:
             os.environ["ELASTICSEARCH_INDEX_CATEGORIES"] = self._old_es_cats
+
+    def test_with_listing_filters_price_and_stars(self) -> None:
+        url = (
+            "https://www.aliexpress.us/category/0/Car-Gadgets-%26-Appliances.html"
+            "?isFromCategory=y&postCatIds=200000287%2C200003425&g=y"
+        )
+        filtered = with_listing_filters(url)
+        self.assertIn("maxPrice=99", filtered)
+        self.assertIn("selectedSwitches=filterCode%3A4StarRating", filtered)
+        self.assertIn("postCatIds=200000287", filtered)
+
+    def test_wholesale_search_url_includes_filters(self) -> None:
+        url = wholesale_search_url("US / Automotive", "https://www.aliexpress.us")
+        self.assertIn("SortType=total_tranpro_desc", url)
+        self.assertIn("maxPrice=99", url)
+        self.assertIn("selectedSwitches=filterCode%3A4StarRating", url)
 
     def test_category_path_depth(self) -> None:
         self.assertEqual(category_path_depth("US / Shoes"), 1)

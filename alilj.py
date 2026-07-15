@@ -53,6 +53,10 @@ ENRICH_CONCURRENCY = 8
 ENRICH_DELAY_MS = 30
 GOTO_MAX_RETRIES = 5
 GOTO_RETRY_BASE_DELAY_S = 5
+# 打开分类/列表页时附加的 URL 过滤（与站内 selectedSwitches / minPrice / maxPrice 一致）
+LISTING_MAX_PRICE = "99"  # 空字符串 = 不加价格上限
+LISTING_MIN_PRICE = ""  # 空字符串 = 不加价格下限
+LISTING_STAR_FILTER = "4StarRating"  # 空字符串 = 不加星级开关；例: 4StarRating
 
 LIST_API_URL_MARKERS = (
     "aer-webapi/v1/search",
@@ -101,6 +105,12 @@ if enrich_conc := (os.getenv("ENRICH_CONCURRENCY") or "").strip():
     ENRICH_CONCURRENCY = max(1, int(enrich_conc))
 if enrich_delay := (os.getenv("ENRICH_DELAY_MS") or "").strip():
     ENRICH_DELAY_MS = max(0, int(enrich_delay))
+if (max_price := os.getenv("LISTING_MAX_PRICE")) is not None:
+    LISTING_MAX_PRICE = max_price.strip()
+if (min_price := os.getenv("LISTING_MIN_PRICE")) is not None:
+    LISTING_MIN_PRICE = min_price.strip()
+if (star_filter := os.getenv("LISTING_STAR_FILTER")) is not None:
+    LISTING_STAR_FILTER = star_filter.strip()
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -764,10 +774,34 @@ class ElasticsearchUrlWriter:
             self.client.close()
 
 
+def with_listing_filters(url: str) -> str:
+    """Attach price / star filters used by AliExpress category & search pages.
+
+    Example:
+      ...&selectedSwitches=filterCode%3A4StarRating&maxPrice=99
+    """
+    parts = urlsplit(url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    if LISTING_MIN_PRICE:
+        query["minPrice"] = LISTING_MIN_PRICE
+    if LISTING_MAX_PRICE:
+        query["maxPrice"] = LISTING_MAX_PRICE
+    if LISTING_STAR_FILTER:
+        code = LISTING_STAR_FILTER
+        if not code.startswith("filterCode:"):
+            code = f"filterCode:{code}"
+        query["selectedSwitches"] = code
+    return urlunsplit(
+        (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
+    )
+
+
 def wholesale_search_url(category_name: str, site_base: str) -> str:
     clean = category_name.split(" / ", 1)[-1].split(" > ", 1)[-1]
     slug = quote(clean.lower().replace("&", "and").replace(",", "").replace(" ", "-"))
-    return f"{site_base}/w/wholesale-{slug}.html?SortType=total_tranpro_desc"
+    return with_listing_filters(
+        f"{site_base}/w/wholesale-{slug}.html?SortType=total_tranpro_desc"
+    )
 
 
 def build_page_url(url: str, page_no: int) -> str:
@@ -1263,7 +1297,7 @@ async def discover_direct_subcategories(
     parent_id = category_id_from_url(category_url)
     site_host = site_host_from_url(category_url)
     excluded = exclude_ids or set()
-    await safe_goto(page, category_url)
+    await safe_goto(page, with_listing_filters(category_url))
     await dismiss_popups(page)
     await handle_captcha(page)
     await scroll_listing_page(page)
@@ -1320,7 +1354,9 @@ async def discover_direct_subcategories(
         cat_id = category_id_from_url(item["url"])
         if cat_id in excluded:
             continue
-        subcategories.append((f"{category_name} > {item['name']}", item["url"]))
+        subcategories.append(
+            (f"{category_name} > {item['name']}", with_listing_filters(item["url"]))
+        )
     return subcategories
 
 
@@ -1536,6 +1572,7 @@ async def crawl_category(
     es_writer: ElasticsearchUrlWriter | None = None,
 ) -> int:
     total_new = 0
+    category_url = with_listing_filters(category_url)
     site_base = site_base_from_url(category_url)
     print(f"\n类目：{category_name}")
     print(f"打开：{category_url}")
@@ -1654,6 +1691,14 @@ async def main_async() -> None:
     print(f"评分补全: {ENRICH_MODE}" + (
         f"（并发 {ENRICH_CONCURRENCY}）" if ENRICH_MODE != "off" else ""
     ))
+    filter_bits = []
+    if LISTING_MIN_PRICE:
+        filter_bits.append(f"minPrice={LISTING_MIN_PRICE}")
+    if LISTING_MAX_PRICE:
+        filter_bits.append(f"maxPrice={LISTING_MAX_PRICE}")
+    if LISTING_STAR_FILTER:
+        filter_bits.append(f"selectedSwitches=filterCode:{LISTING_STAR_FILTER}")
+    print(f"列表过滤: {', '.join(filter_bits) if filter_bits else '关闭'}")
     print()
 
     seen_links = load_seen_links()
