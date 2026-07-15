@@ -14,9 +14,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import random
 import re
+import shutil
+import subprocess
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -56,12 +59,23 @@ ENRICH_DELAY_MS = 30
 GOTO_MAX_RETRIES = 5
 GOTO_RETRY_BASE_DELAY_S = 5
 CRAWL_WORKERS = 2  # 并行 worker 数；每个 worker 独立浏览器，从队列领取分类
+LOGIN_RECOVERY_RETRIES = 8  # 登录/风控拦截后重新打开目标页的次数
 # 打开分类/列表页时附加的 URL 过滤（与站内 selectedSwitches / minPrice / maxPrice 一致）
 LISTING_MAX_PRICE = "99"  # 空字符串 = 不加价格上限
 LISTING_MIN_PRICE = ""  # 空字符串 = 不加价格下限
 LISTING_STAR_FILTER = "4StarRating"  # 空字符串 = 不加星级开关；例: 4StarRating
 # Serialize local file + shared seen_links updates across workers.
 FILE_IO_LOCK = threading.Lock()
+LOGIN_URL_MARKERS = (
+    "login.aliexpress.",
+    "passport.aliexpress.",
+    "sso.aliexpress.",
+    "/account/login",
+    "/login?",
+    "/login/",
+    "/login.html",
+    "signin",
+)
 
 LIST_API_URL_MARKERS = (
     "aer-webapi/v1/search",
@@ -118,6 +132,8 @@ if (star_filter := os.getenv("LISTING_STAR_FILTER")) is not None:
     LISTING_STAR_FILTER = star_filter.strip()
 if crawl_workers := (os.getenv("CRAWL_WORKERS") or "").strip():
     CRAWL_WORKERS = max(1, int(crawl_workers))
+if login_retries := (os.getenv("LOGIN_RECOVERY_RETRIES") or "").strip():
+    LOGIN_RECOVERY_RETRIES = max(1, int(login_retries))
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -127,10 +143,9 @@ STEALTH_SCRIPT = """
 Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
 window.chrome = window.chrome || { runtime: {} };
 """
-CHROMIUM_ARGS = [
+CHROMIUM_ARGS_BASE = [
     "--disable-blink-features=AutomationControlled",
     "--disable-dev-shm-usage",
-    "--start-maximized",
 ]
 BROWSER_DEAD_MARKERS = (
     "Target page, context or browser has been closed",
@@ -153,6 +168,10 @@ FRAME_TRANSIENT_ERROR_MARKERS = (
     "Cannot find context with specified id",
     "Frame.querySelector",
 )
+
+
+def worker_log(worker_id: int, message: str) -> None:
+    print(f"[W{worker_id}] {message}")
 
 
 def site_base_from_url(url: str) -> str:
@@ -843,15 +862,101 @@ def is_captcha_text(text: str) -> bool:
     return any(marker in lowered for marker in markers)
 
 
-async def sniff_captcha_signals(page: Page) -> bool:
-    """轻量风控检测：title / URL / 正文前 2k，避免每轮 page.content()。"""
+def is_login_url(url: str) -> bool:
+    lowered = (url or "").lower()
+    return any(marker in lowered for marker in LOGIN_URL_MARKERS)
+
+
+def detect_screen_size() -> tuple[int, int]:
+    """Best-effort screen size for tiling headed browsers."""
+    if w := (os.getenv("SCREEN_WIDTH") or "").strip():
+        if h := (os.getenv("SCREEN_HEIGHT") or "").strip():
+            return max(800, int(w)), max(600, int(h))
+    for cmd in (
+        ["xdotool", "getdisplaygeometry"],
+        ["xdpyinfo"],
+    ):
+        binary = cmd[0]
+        if not shutil.which(binary):
+            continue
+        try:
+            out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
+        except Exception:
+            continue
+        if binary == "xdotool":
+            parts = out.strip().split()
+            if len(parts) >= 2:
+                return max(800, int(parts[0])), max(600, int(parts[1]))
+        match = re.search(r"dimensions:\s*(\d+)x(\d+)", out)
+        if match:
+            return max(800, int(match.group(1))), max(600, int(match.group(2)))
+    try:
+        import tkinter as tk
+
+        root = tk.Tk()
+        root.withdraw()
+        size = (max(800, int(root.winfo_screenwidth())), max(600, int(root.winfo_screenheight())))
+        root.destroy()
+        return size
+    except Exception:
+        return 1920, 1080
+
+
+def worker_window_bounds(worker_id: int, workers: int) -> tuple[int, int, int, int]:
+    """Tile workers left-to-right, top-to-bottom. Returns x, y, width, height."""
+    workers = max(1, workers)
+    worker_id = max(0, min(worker_id, workers - 1))
+    screen_w, screen_h = detect_screen_size()
+    cols = math.ceil(math.sqrt(workers))
+    rows = math.ceil(workers / cols)
+    width = max(640, screen_w // cols)
+    height = max(480, screen_h // rows)
+    col = worker_id % cols
+    row = worker_id // cols
+    return col * width, row * height, width, height
+
+
+async def apply_window_bounds(page: Page, x: int, y: int, width: int, height: int) -> None:
+    """Force Chromium window placement after launch (more reliable than CLI alone)."""
+    if page.is_closed() or HEADLESS:
+        return
+    try:
+        session = await page.context.new_cdp_session(page)
+        meta = await session.send("Browser.getWindowForTarget")
+        window_id = meta.get("windowId")
+        if window_id is None:
+            return
+        await session.send(
+            "Browser.setWindowBounds",
+            {
+                "windowId": window_id,
+                "bounds": {
+                    "left": int(x),
+                    "top": int(y),
+                    "width": int(width),
+                    "height": int(height),
+                    "windowState": "normal",
+                },
+            },
+        )
+    except Exception as exc:
+        print(f"平铺窗口失败（可忽略）: {exc}")
+
+
+async def is_login_page(page: Page) -> bool:
     if page.is_closed():
         return False
+    return is_login_url(page.url or "")
+
+
+async def sniff_captcha_signals(page: Page) -> bool:
+    """轻量风控检测：title / URL / 正文前 2k（不含登录页）。"""
+    if page.is_closed():
+        return False
+    if await is_login_page(page):
+        return False
     url = (page.url or "").lower()
-    if any(
-        marker in url
-        for marker in ("punish", "captcha", "_____tmd_____", "/login", "security")
-    ):
+    if any(marker in url for marker in ("punish", "captcha", "_____tmd_____", "security")):
         return True
     try:
         title = await page.title()
@@ -870,6 +975,37 @@ async def sniff_captcha_signals(page: Page) -> bool:
             raise
         return False
     return is_captcha_text(str(snippet or ""))
+
+
+async def wait_until_unblocked(page: Page, *, kind: str, worker_id: int = 0) -> bool:
+    """Wait for manual login/captcha clearance. Returns True if page looks clear."""
+    worker_log(
+        worker_id,
+        f"检测到{kind}页面：{page.url}；请在该窗口完成操作，最多等待 {CAPTCHA_WAIT_SECONDS} 秒。",
+    )
+    waited = 0
+    while waited < CAPTCHA_WAIT_SECONDS:
+        if page.is_closed():
+            raise RuntimeError("浏览器页面已关闭，请重启爬虫")
+        if kind != "登录":
+            await drag_slider_if_present(page)
+        try:
+            await page.wait_for_timeout(2000)
+        except Exception as exc:
+            if is_browser_dead(exc, page=page):
+                raise
+            continue
+        waited += 2
+        still_login = await is_login_page(page)
+        still_captcha = await sniff_captcha_signals(page)
+        if kind == "登录" and not still_login:
+            worker_log(worker_id, "登录已完成，准备重新打开目标页。")
+            return True
+        if kind != "登录" and not still_login and not still_captcha:
+            worker_log(worker_id, "验证已通过，准备重新打开目标页。")
+            return True
+    worker_log(worker_id, f"等待{kind}结束，可能仍未恢复；将重试目标页。")
+    return False
 
 
 def is_list_api_response(response) -> bool:
@@ -951,7 +1087,8 @@ async def sleep(short: bool = False) -> None:
     await asyncio.sleep(random.randint(low, high) / 1000)
 
 
-async def safe_goto(page: Page, url: str) -> None:
+async def _goto_network(page: Page, url: str, *, worker_id: int = 0) -> None:
+    """Single navigation with transient network retries only."""
     if page.is_closed():
         raise RuntimeError("浏览器页面已关闭，请重启爬虫")
     for attempt in range(1, GOTO_MAX_RETRIES + 1):
@@ -965,43 +1102,72 @@ async def safe_goto(page: Page, url: str) -> None:
                 raise
             if is_transient_network_error(exc) and attempt < GOTO_MAX_RETRIES:
                 wait_s = GOTO_RETRY_BASE_DELAY_S * attempt + random.uniform(0, 2)
-                print(
-                    f"网络异常 ({attempt}/{GOTO_MAX_RETRIES})：{exc}\n"
-                    f"  {wait_s:.1f}s 后重试：{url}"
+                worker_log(
+                    worker_id,
+                    f"网络异常 ({attempt}/{GOTO_MAX_RETRIES})：{exc}；"
+                    f"{wait_s:.1f}s 后重试：{url}",
                 )
                 await asyncio.sleep(wait_s)
                 continue
             raise
 
 
-async def handle_captcha(page: Page) -> bool:
+async def safe_goto(page: Page, url: str, *, worker_id: int = 0) -> None:
+    """Goto url; if redirected to login/captcha, wait then reopen the target."""
+    if page.is_closed():
+        raise RuntimeError("浏览器页面已关闭，请重启爬虫")
+
+    for recovery in range(1, LOGIN_RECOVERY_RETRIES + 1):
+        await _goto_network(page, url, worker_id=worker_id)
+        await dismiss_popups(page)
+
+        if await is_login_page(page):
+            worker_log(
+                worker_id,
+                f"被重定向到登录页 ({recovery}/{LOGIN_RECOVERY_RETRIES})",
+            )
+            await wait_until_unblocked(page, kind="登录", worker_id=worker_id)
+            worker_log(worker_id, f"重新打开目标页：{url}")
+            continue
+
+        slider_dragged = await drag_slider_if_present(page)
+        if slider_dragged or await sniff_captcha_signals(page):
+            worker_log(
+                worker_id,
+                f"触发验证/风控 ({recovery}/{LOGIN_RECOVERY_RETRIES})",
+            )
+            await wait_until_unblocked(page, kind="验证/风控", worker_id=worker_id)
+            worker_log(worker_id, f"重新打开目标页：{url}")
+            continue
+
+        # Still somehow on a login URL after overlays — retry.
+        if is_login_url(page.url or ""):
+            worker_log(worker_id, f"仍停留在登录相关页，重试：{page.url}")
+            continue
+        return
+
+    await _goto_network(page, url, worker_id=worker_id)
+    await dismiss_popups(page)
+    if await is_login_page(page) or await sniff_captcha_signals(page):
+        worker_log(
+            worker_id,
+            f"警告：多次重试后仍可能在登录/风控页：{page.url}",
+        )
+
+
+async def handle_captcha(page: Page, *, worker_id: int = 0) -> bool:
+    """Compatibility wrapper: wait out captcha/login then return."""
     if page.is_closed():
         raise RuntimeError("浏览器页面已关闭，请重启爬虫")
     await dismiss_popups(page)
 
+    if await is_login_page(page):
+        return await wait_until_unblocked(page, kind="登录", worker_id=worker_id)
+
     slider_dragged = await drag_slider_if_present(page)
     if not slider_dragged and not await sniff_captcha_signals(page):
         return False
-
-    print(f"检测到验证/风控页面：{page.url}")
-    print(f"请在打开的浏览器中手动完成验证，最多等待 {CAPTCHA_WAIT_SECONDS} 秒。")
-    waited = 0
-    while waited < CAPTCHA_WAIT_SECONDS:
-        if page.is_closed():
-            raise RuntimeError("浏览器页面已关闭，请重启爬虫")
-        await drag_slider_if_present(page)
-        try:
-            await page.wait_for_timeout(2000)
-        except Exception as exc:
-            if is_browser_dead(exc, page=page):
-                raise
-            continue
-        waited += 2
-        if not await sniff_captcha_signals(page):
-            print("验证已通过，继续抓取。")
-            return True
-    print("等待结束，页面可能仍在验证状态。")
-    return True
+    return await wait_until_unblocked(page, kind="验证/风控", worker_id=worker_id)
 
 
 async def dismiss_popups(page: Page) -> None:
@@ -1303,6 +1469,7 @@ async def discover_direct_subcategories(
     category_url: str,
     *,
     exclude_ids: set[str] | None = None,
+    worker_id: int = 0,
 ) -> list[tuple[str, str]]:
     if is_calp_url(category_url):
         # Calp lv3 icons have no href; handled inside crawl_category via clicks.
@@ -1311,9 +1478,10 @@ async def discover_direct_subcategories(
     parent_id = category_id_from_url(category_url)
     site_host = site_host_from_url(category_url)
     excluded = exclude_ids or set()
-    await safe_goto(page, with_listing_filters(category_url))
+    filtered = with_listing_filters(category_url)
+    await safe_goto(page, filtered, worker_id=worker_id)
     await dismiss_popups(page)
-    await handle_captcha(page)
+    await handle_captcha(page, worker_id=worker_id)
     await scroll_listing_page(page)
     await sleep()
 
@@ -1380,6 +1548,7 @@ async def discover_all_subcategories(
     category_url: str,
     *,
     max_depth: int = MAX_SUBCATEGORY_DEPTH,
+    worker_id: int = 0,
 ) -> list[tuple[str, str]]:
     root_id = category_id_from_url(category_url)
     seen_ids: set[str] = {root_id} if root_id else set()
@@ -1396,6 +1565,7 @@ async def discover_all_subcategories(
             parent_name,
             parent_url,
             exclude_ids=seen_ids,
+            worker_id=worker_id,
         )
         for sub_name, sub_url in direct_subs:
             sub_id = category_id_from_url(sub_url)
@@ -1448,10 +1618,6 @@ def save_new_products(
     return new_count
 
 
-def worker_log(worker_id: int, message: str) -> None:
-    print(f"[W{worker_id}] {message}")
-
-
 def worker_user_data_dir(worker_id: int) -> Path:
     # Keep worker-0 on the legacy profile so existing cookies still apply.
     if CRAWL_WORKERS <= 1 or worker_id <= 0:
@@ -1466,6 +1632,9 @@ async def crawl_infinite_scroll(
     seen_links: set[str],
     collector: ListingCollector,
     es_writer: ElasticsearchUrlWriter | None = None,
+    *,
+    worker_id: int = 0,
+    listing_url: str | None = None,
 ) -> int:
     """Scroll until consecutive rounds yield no new product IDs."""
     total_new = 0
@@ -1477,7 +1646,7 @@ async def crawl_infinite_scroll(
 
     while True:
         if MAX_SCROLL_ROUNDS > 0 and round_no >= MAX_SCROLL_ROUNDS:
-            print(f"达到最大滚动轮数 {MAX_SCROLL_ROUNDS}，停止：{category_name}")
+            worker_log(worker_id, f"达到最大滚动轮数 {MAX_SCROLL_ROUNDS}，停止：{category_name}")
             break
 
         round_no += 1
@@ -1488,7 +1657,14 @@ async def crawl_infinite_scroll(
             if FIRST_ROUND_SETTLE_MS > 0:
                 await page.wait_for_timeout(FIRST_ROUND_SETTLE_MS)
 
-        await handle_captcha(page)
+        if await is_login_page(page) and listing_url:
+            worker_log(worker_id, "滚动中被踢到登录页，等待登录后重新打开列表。")
+            await wait_until_unblocked(page, kind="登录", worker_id=worker_id)
+            await safe_goto(page, listing_url, worker_id=worker_id)
+        else:
+            await handle_captcha(page, worker_id=worker_id)
+            if listing_url and await is_login_page(page):
+                await safe_goto(page, listing_url, worker_id=worker_id)
         products = await extract_products(page, site_base, collector)
 
         # Re-apply metrics gathered earlier this category run (esp. feedback enrich).
@@ -1542,10 +1718,11 @@ async def crawl_infinite_scroll(
         with_metrics = sum(
             1 for p in products if p.rating is not None and p.reviews is not None
         )
-        print(
+        worker_log(
+            worker_id,
             f"滚动第 {round_no} 轮：可见/API 合计 {len(products)} 个"
             f"（{with_metrics} 个含评分+评论数），"
-            f"本轮新 ID {len(fresh)} 个，保存新增 {new_count} 个"
+            f"本轮新 ID {len(fresh)} 个，保存新增 {new_count} 个",
         )
 
         if (not current_ids or not fresh) and round_no > 1:
@@ -1556,8 +1733,9 @@ async def crawl_infinite_scroll(
         seen_ids.update(current_ids)
 
         if consecutive_dup >= CONSECUTIVE_DUPLICATE_SCROLLS_TO_STOP:
-            print(
-                f"连续 {consecutive_dup} 轮无新商品，判定 {category_name} 已到底。"
+            worker_log(
+                worker_id,
+                f"连续 {consecutive_dup} 轮无新商品，判定 {category_name} 已到底。",
             )
             break
 
@@ -1566,7 +1744,9 @@ async def crawl_infinite_scroll(
     return total_new
 
 
-async def _prepare_calp_lv3(page: Page, category_url: str, sub_name: str) -> bool:
+async def _prepare_calp_lv3(
+    page: Page, category_url: str, sub_name: str, *, worker_id: int = 0
+) -> bool:
     """点击 calp 子类目；失败时整页重开再点。"""
     await dismiss_popups(page)
     try:
@@ -1578,9 +1758,9 @@ async def _prepare_calp_lv3(page: Page, category_url: str, sub_name: str) -> boo
         if CALP_CLICK_SETTLE_MS > 0:
             await page.wait_for_timeout(CALP_CLICK_SETTLE_MS)
         return True
-    await safe_goto(page, category_url)
+    await safe_goto(page, category_url, worker_id=worker_id)
     await dismiss_popups(page)
-    await handle_captcha(page)
+    await handle_captcha(page, worker_id=worker_id)
     await page.wait_for_timeout(500)
     if not await click_calp_lv3(page, sub_name):
         return False
@@ -1605,13 +1785,20 @@ async def crawl_category(
     worker_log(worker_id, f"打开：{category_url}")
 
     collector.clear()
-    await safe_goto(page, category_url)
+    await safe_goto(page, category_url, worker_id=worker_id)
     await dismiss_popups(page)
-    await handle_captcha(page)
+    await handle_captcha(page, worker_id=worker_id)
     await sleep()
 
     total_new += await crawl_infinite_scroll(
-        page, category_name, site_base, seen_links, collector, es_writer
+        page,
+        category_name,
+        site_base,
+        seen_links,
+        collector,
+        es_writer,
+        worker_id=worker_id,
+        listing_url=category_url,
     )
 
     if is_calp_url(category_url) and CRAWL_SUBCATEGORIES and " > " not in category_name:
@@ -1622,9 +1809,9 @@ async def crawl_category(
         await page.wait_for_timeout(500)
         lv3_names = await list_calp_lv3_names(page)
         if not lv3_names:
-            await safe_goto(page, category_url)
+            await safe_goto(page, category_url, worker_id=worker_id)
             await dismiss_popups(page)
-            await handle_captcha(page)
+            await handle_captcha(page, worker_id=worker_id)
             await page.wait_for_timeout(800)
             lv3_names = await list_calp_lv3_names(page)
         if lv3_names:
@@ -1636,43 +1823,77 @@ async def crawl_category(
             target_name = f"{category_name} > {sub_name}"
             worker_log(worker_id, f"子类目（点击）：{target_name}")
             if CALP_RELOAD_EACH_LV3:
-                await safe_goto(page, category_url)
+                await safe_goto(page, category_url, worker_id=worker_id)
                 await dismiss_popups(page)
-                await handle_captcha(page)
+                await handle_captcha(page, worker_id=worker_id)
                 await page.wait_for_timeout(500)
                 if not await click_calp_lv3(page, sub_name):
                     worker_log(worker_id, f"未能点击子类目：{sub_name}")
                     continue
                 if CALP_CLICK_SETTLE_MS > 0:
                     await page.wait_for_timeout(CALP_CLICK_SETTLE_MS)
-            elif not await _prepare_calp_lv3(page, category_url, sub_name):
+            elif not await _prepare_calp_lv3(
+                page, category_url, sub_name, worker_id=worker_id
+            ):
                 worker_log(worker_id, f"未能点击子类目：{sub_name}")
                 continue
             collector.clear()
             total_new += await crawl_infinite_scroll(
-                page, target_name, site_base, seen_links, collector, es_writer
+                page,
+                target_name,
+                site_base,
+                seen_links,
+                collector,
+                es_writer,
+                worker_id=worker_id,
+                listing_url=category_url,
             )
 
     elif (not is_calp_url(category_url)) and " > " not in category_name:
         wholesale = wholesale_search_url(category_name, site_base)
         worker_log(worker_id, f"附加批发搜索：{wholesale}")
         collector.clear()
-        await safe_goto(page, wholesale)
+        await safe_goto(page, wholesale, worker_id=worker_id)
         await dismiss_popups(page)
-        await handle_captcha(page)
+        await handle_captcha(page, worker_id=worker_id)
         total_new += await crawl_infinite_scroll(
-            page, category_name, site_base, seen_links, collector, es_writer
+            page,
+            category_name,
+            site_base,
+            seen_links,
+            collector,
+            es_writer,
+            worker_id=worker_id,
+            listing_url=wholesale,
         )
 
     return total_new
 
 
 async def create_browser(
-    playwright, worker_id: int = 0
+    playwright, worker_id: int = 0, *, workers: int | None = None
 ) -> tuple[BrowserContext, Page, ListingCollector]:
     profile_dir = worker_user_data_dir(worker_id)
     profile_dir.mkdir(parents=True, exist_ok=True)
     collector = ListingCollector()
+    worker_count = max(1, workers if workers is not None else CRAWL_WORKERS)
+    launch_args = list(CHROMIUM_ARGS_BASE)
+    x = y = width = height = 0
+    if not HEADLESS:
+        x, y, width, height = worker_window_bounds(worker_id, worker_count)
+        launch_args.extend(
+            [
+                f"--window-position={x},{y}",
+                f"--window-size={width},{height}",
+            ]
+        )
+        worker_log(
+            worker_id,
+            f"窗口平铺: +{x}+{y} {width}x{height}（共 {worker_count} 格）",
+        )
+    else:
+        launch_args.append("--start-maximized")
+
     context = await playwright.chromium.launch_persistent_context(
         user_data_dir=str(profile_dir),
         headless=HEADLESS,
@@ -1680,11 +1901,13 @@ async def create_browser(
         locale="en-US",
         viewport=None,
         no_viewport=True,
-        args=CHROMIUM_ARGS,
+        args=launch_args,
         ignore_default_args=["--enable-automation"],
     )
     await context.add_init_script(STEALTH_SCRIPT)
     page = context.pages[0] if context.pages else await context.new_page()
+    if not HEADLESS:
+        await apply_window_bounds(page, x, y, width, height)
 
     async def on_response(response) -> None:
         await collector.handle_response(response)
@@ -1709,6 +1932,8 @@ async def process_category_seed(
     category_url: str,
     seen_links: set[str],
     es_writer: ElasticsearchUrlWriter,
+    *,
+    workers: int = 1,
 ) -> int:
     """Discover classic subcats (if needed) and crawl one seed category tree."""
     total_new = 0
@@ -1716,6 +1941,16 @@ async def process_category_seed(
     page: Page | None = None
     collector: ListingCollector | None = None
     targets = [(category_name, category_url)]
+
+    async def ensure_browser() -> tuple[BrowserContext, Page, ListingCollector]:
+        nonlocal context, page, collector
+        if context is None or page is None or page.is_closed():
+            await close_browser(context)
+            context, page, collector = await create_browser(
+                playwright, worker_id, workers=workers
+            )
+        assert collector is not None
+        return context, page, collector
 
     try:
         # Classic /category/ seeds still auto-discover linked subcats.
@@ -1727,13 +1962,12 @@ async def process_category_seed(
         ):
             for attempt in range(2):
                 try:
-                    if context is None or page is None or page.is_closed():
-                        await close_browser(context)
-                        context, page, collector = await create_browser(
-                            playwright, worker_id
-                        )
+                    _, page, _ = await ensure_browser()
                     subs = await discover_all_subcategories(
-                        page, category_name, category_url
+                        page,
+                        category_name,
+                        category_url,
+                        worker_id=worker_id,
                     )
                     if subs:
                         worker_log(
@@ -1755,12 +1989,7 @@ async def process_category_seed(
         for target_name, target_url in targets:
             for attempt in range(2):
                 try:
-                    if context is None or page is None or page.is_closed():
-                        await close_browser(context)
-                        context, page, collector = await create_browser(
-                            playwright, worker_id
-                        )
-                    assert collector is not None
+                    _, page, collector = await ensure_browser()
                     total_new += await crawl_category(
                         page,
                         target_name,
@@ -1791,8 +2020,13 @@ async def crawl_worker(
     category_queue: asyncio.Queue[tuple[str, str] | None],
     seen_links: set[str],
     es_writer: ElasticsearchUrlWriter,
+    *,
+    workers: int = 1,
 ) -> int:
     total_new = 0
+    # Stagger launches so windows tile cleanly and logins aren't all at once.
+    if worker_id > 0:
+        await asyncio.sleep(1.2 * worker_id)
     worker_log(
         worker_id,
         f"启动，浏览器目录: {worker_user_data_dir(worker_id)}",
@@ -1811,6 +2045,7 @@ async def crawl_worker(
                 category_url,
                 seen_links,
                 es_writer,
+                workers=workers,
             )
             worker_log(worker_id, f"完成类目：{category_name}（累计新增 {total_new}）")
         finally:
@@ -1827,6 +2062,10 @@ async def main_async() -> None:
     print(f"浏览器状态目录: {USER_DATA_DIR}")
     if workers > 1:
         print(f"  worker-0 -> {USER_DATA_DIR.name}/，其余 -> worker-1…worker-{workers - 1}/")
+    if not HEADLESS:
+        sw, sh = detect_screen_size()
+        print(f"窗口平铺: 屏幕 {sw}x{sh}，按 {workers} 格排布（不互相最大化遮盖）")
+    print(f"登录恢复重试: 最多 {LOGIN_RECOVERY_RETRIES} 次")
     print(f"商品链接文件: {LINKS_FILE}")
     print(f"商品列表文件: {PRODUCTS_JSONL}")
     print(f"类目数量: {len(categories)}（US）")
@@ -1865,7 +2104,12 @@ async def main_async() -> None:
         results = await asyncio.gather(
             *[
                 crawl_worker(
-                    playwright, worker_id, category_queue, seen_links, es_writer
+                    playwright,
+                    worker_id,
+                    category_queue,
+                    seen_links,
+                    es_writer,
+                    workers=workers,
                 )
                 for worker_id in range(workers)
             ]

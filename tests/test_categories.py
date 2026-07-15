@@ -17,10 +17,12 @@ import alilj  # noqa: E402
 from alilj import (  # noqa: E402
     category_path_depth,
     is_calp_url,
+    is_login_url,
     load_categories,
     wholesale_search_url,
     with_listing_filters,
     worker_user_data_dir,
+    worker_window_bounds,
 )
 
 CATEGORY_URL_RE = re.compile(
@@ -66,6 +68,24 @@ class CategoryConfigTests(unittest.TestCase):
             )
         finally:
             alilj.CRAWL_WORKERS = old
+
+    def test_worker_window_bounds_tiles_four(self) -> None:
+        os.environ["SCREEN_WIDTH"] = "1920"
+        os.environ["SCREEN_HEIGHT"] = "1080"
+        try:
+            boxes = [worker_window_bounds(i, 4) for i in range(4)]
+            self.assertEqual(boxes[0], (0, 0, 960, 540))
+            self.assertEqual(boxes[1], (960, 0, 960, 540))
+            self.assertEqual(boxes[2], (0, 540, 960, 540))
+            self.assertEqual(boxes[3], (960, 540, 960, 540))
+        finally:
+            os.environ.pop("SCREEN_WIDTH", None)
+            os.environ.pop("SCREEN_HEIGHT", None)
+
+    def test_is_login_url(self) -> None:
+        self.assertTrue(is_login_url("https://login.aliexpress.com/?return_url=x"))
+        self.assertTrue(is_login_url("https://www.aliexpress.us/p/account/login"))
+        self.assertFalse(is_login_url("https://www.aliexpress.us/p/calp-plus/index.html"))
 
     def test_category_path_depth(self) -> None:
         self.assertEqual(category_path_depth("US / Shoes"), 1)
