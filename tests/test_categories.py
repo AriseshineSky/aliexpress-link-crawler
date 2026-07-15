@@ -18,6 +18,8 @@ from alilj import (  # noqa: E402
     ElasticsearchUrlWriter,
     ListingProduct,
     category_path_depth,
+    is_blacklisted_category,
+    is_blocked_category_url,
     is_calp_url,
     is_login_url,
     load_categories,
@@ -99,7 +101,7 @@ class CategoryConfigTests(unittest.TestCase):
 
     def test_load_categories_count(self) -> None:
         categories = load_categories()
-        self.assertGreaterEqual(len(categories), 20)
+        self.assertGreaterEqual(len(categories), 13)
 
     def test_category_urls_are_us_calp_plus(self) -> None:
         for name, url in load_categories():
@@ -107,6 +109,7 @@ class CategoryConfigTests(unittest.TestCase):
             self.assertRegex(url, CATEGORY_URL_RE, msg=f"Bad URL for {name}")
             self.assertTrue(is_calp_url(url))
             self.assertNotIn("aliexpress.com/", url)
+            self.assertFalse(is_blocked_category_url(url), msg=name)
 
     def test_required_top_level_categories(self) -> None:
         names = {
@@ -116,16 +119,61 @@ class CategoryConfigTests(unittest.TestCase):
         }
         required = {
             "Automotive",
-            "Women's Clothing",
-            "Men's Clothing",
-            "Shoes",
+            "Toys & Games",
+            "Beauty & Health",
             "Pet Supplies",
             "Hair Extensions & Wigs",
             "Electronics",
-            "Baby & Maternity",
+            "Office & School Supplies",
         }
         missing = required - names
         self.assertFalse(missing, msg=f"Missing L1 categories: {missing}")
+        self.assertNotIn("Women's Clothing", names)
+        self.assertNotIn("Men's Clothing", names)
+
+    def test_blocks_clothing_category_urls(self) -> None:
+        self.assertTrue(
+            is_blocked_category_url(
+                "https://www.aliexpress.us/p/calp-plus/index.html"
+                "?categoryTab=women%27s_clothing&maxPrice=99"
+            )
+        )
+        self.assertTrue(
+            is_blocked_category_url(
+                "https://www.aliexpress.us/p/calp-plus/index.html"
+                "?categoryTab=men's_clothing&selectedSwitches=filterCode%3A4StarRating"
+            )
+        )
+        self.assertFalse(
+            is_blocked_category_url(
+                "https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=automotive"
+            )
+        )
+
+    def test_clothing_blacklist_keywords(self) -> None:
+        self.assertTrue(is_blacklisted_category(name="US / Women's Clothing"))
+        self.assertTrue(is_blacklisted_category(name="Women's Dresses"))
+        self.assertTrue(is_blacklisted_category(name="Men's Jackets"))
+        self.assertTrue(is_blacklisted_category(name="Athletic Clothing"))
+        self.assertFalse(is_blacklisted_category(name="US / Automotive"))
+        self.assertFalse(is_blacklisted_category(name="Car Electronics"))
+        self.assertFalse(is_blacklisted_category(name="Pet Supplies"))
+
+    def test_adult_sensitive_blacklist(self) -> None:
+        self.assertTrue(
+            is_blacklisted_category(name="US / Novelty & Special Use")
+        )
+        self.assertTrue(
+            is_blocked_category_url(
+                "https://www.aliexpress.us/p/calp-plus/index.html"
+                "?categoryTab=novelty_%26_special_use"
+            )
+        )
+        self.assertTrue(is_blacklisted_category(name="Adult Sex Toys"))
+        self.assertTrue(is_blacklisted_category(name="Erotic Products"))
+        self.assertTrue(is_blacklisted_category(name="成人用品"))
+        self.assertFalse(is_blacklisted_category(name="US / Toys & Games"))
+        self.assertFalse(is_blacklisted_category(name="Office & School Supplies"))
 
     def test_generate_categories_script(self) -> None:
         script = ROOT / "scripts" / "generate_categories_yaml.py"
@@ -139,9 +187,13 @@ class CategoryConfigTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr or result.stdout)
 
         raw = yaml.safe_load((ROOT / "config" / "categories.yaml").read_text(encoding="utf-8"))
-        self.assertGreaterEqual(len(raw["categories"]), 20)
+        self.assertEqual(len(raw["categories"]), 13)
         self.assertTrue(all(c["url"].startswith("https://www.aliexpress.us/") for c in raw["categories"]))
         self.assertTrue(all("calp-plus" in c["url"] for c in raw["categories"]))
+        tabs = " ".join(c["url"] for c in raw["categories"]).lower()
+        self.assertNotIn("women", tabs)
+        self.assertNotIn("men%27s_clothing", tabs)
+        self.assertNotIn("men's_clothing", tabs)
 
 
 class ElasticsearchDedupeTests(unittest.TestCase):

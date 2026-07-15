@@ -1,4 +1,5 @@
-# AliExpress US category URLs from homepage calp-plus tabs.
+# AliExpress US priority crawl seeds (calp-plus).
+# Keep in sync with config/categories.priority.yaml / ES enabled categories.
 # Product lists load via infinite scroll (not ?page=N).
 # Subcategory icons on calp pages are in-page filters (no separate URL);
 # the crawler clicks them when CRAWL_SUBCATEGORIES=1.
@@ -6,32 +7,17 @@ categories:
   - name: US / Automotive
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=automotive
 
-  - name: US / Appliances
-    url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=appliances
-
-  - name: US / Women's Clothing
-    url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=women%27s_clothing
-
-  - name: US / Men's Clothing
-    url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=men%27s_clothing
-
-  - name: US / Furniture
-    url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=furniture
-
   - name: US / Toys & Games
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=toys_%26_games
-
-  - name: US / Shoes
-    url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=shoes
 
   - name: US / Beauty & Health
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=beauty_%26_health
 
-  - name: US / Hair Extensions & Wigs
-    url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=hair_extensions_%26_wigs
-
   - name: US / Jewelry & Accessories
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=jewelry_%26_accessories
+
+  - name: US / Hair Extensions & Wigs
+    url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=hair_extensions_%26_wigs
 
   - name: US / Pet Supplies
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=pet_supplies
@@ -48,29 +34,11 @@ categories:
   - name: US / Tools & Home Improvement
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=tools_%26_home_improvement
 
-  - name: US / Bags & Luggage
-    url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=bags_%26_luggage
-
   - name: US / Sports & Outdoors
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=sports_%26_outdoors
-
-  - name: US / Baby & Maternity
-    url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=baby_%26_maternity
-
-  - name: US / Novelty & Special Use
-    url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=novelty_%26_special_use
 
   - name: US / Arts, Crafts & Sewing
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=arts%2C_crafts_%26_sewing
 
   - name: US / Office & School Supplies
     url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=office_%26_school_supplies
-
-  - name: US / Motorcycles & Powersports
-    url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=motorcycles_%26_powersports
-
-  - name: US / Books & Media
-    url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=books_%26_media
-
-  - name: US / Business, Industry & Science
-    url: https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=business%2C_industry_%26_science

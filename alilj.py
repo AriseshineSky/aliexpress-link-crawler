@@ -24,7 +24,7 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit, urlunsplit
 
 import pyautogui
 import yaml
@@ -76,6 +76,88 @@ LOGIN_URL_MARKERS = (
     "/login.html",
     "signin",
 )
+CATEGORY_BLACKLIST_FILE = BASE_DIR / "config" / "category_blacklist.yaml"
+# Defaults; overridden by category_blacklist.yaml and/or env after load_dotenv.
+BLOCKED_CATEGORY_TABS: frozenset[str] = frozenset(
+    {
+        "women's_clothing",
+        "men's_clothing",
+        "women_s_clothing",
+        "men_s_clothing",
+        "novelty_&_special_use",
+        "novelty_%26_special_use",
+    }
+)
+CATEGORY_BLACKLIST_KEYWORDS: tuple[str, ...] = (
+    # clothing
+    "women's clothing",
+    "men's clothing",
+    "apparel",
+    "clothing",
+    "clothes",
+    "dress",
+    "dresses",
+    "shirt",
+    "shirts",
+    "blouse",
+    "skirt",
+    "skirts",
+    "jeans",
+    "hoodie",
+    "sweatshirt",
+    "sweater",
+    "jacket",
+    "jackets",
+    "coat",
+    "coats",
+    "underwear",
+    "lingerie",
+    "swimsuit",
+    "swimwear",
+    "bikini",
+    "t-shirt",
+    "tshirt",
+    "pants",
+    "trousers",
+    "shorts",
+    "socks",
+    "activewear",
+    "sportswear",
+    # adult / sensitive
+    "novelty & special use",
+    "novelty and special use",
+    "adult novelty",
+    "adult product",
+    "adult products",
+    "adult toy",
+    "adult toys",
+    "adult sex",
+    "sex toy",
+    "sex toys",
+    "sex product",
+    "sex products",
+    "erotic",
+    "erotica",
+    "vibrator",
+    "vibrators",
+    "dildo",
+    "dildos",
+    "masturbator",
+    "masturbation",
+    "bdsm",
+    "fetish",
+    "bondage",
+    "intimate toy",
+    "intimate toys",
+    "pleasure toy",
+    "pleasure toys",
+    "sexy lingerie",
+    "adult entertainment",
+    "成人",
+    "情趣",
+    "性用品",
+    "成人用品",
+)
 
 LIST_API_URL_MARKERS = (
     "aer-webapi/v1/search",
@@ -90,6 +172,43 @@ if categories_file := (os.getenv("CATEGORIES_FILE") or "").strip():
     CATEGORIES_FILE = Path(categories_file)
     if not CATEGORIES_FILE.is_absolute():
         CATEGORIES_FILE = BASE_DIR / CATEGORIES_FILE
+if blacklist_file := (os.getenv("CATEGORY_BLACKLIST_FILE") or "").strip():
+    CATEGORY_BLACKLIST_FILE = Path(blacklist_file)
+    if not CATEGORY_BLACKLIST_FILE.is_absolute():
+        CATEGORY_BLACKLIST_FILE = BASE_DIR / CATEGORY_BLACKLIST_FILE
+
+
+def _parse_csv_lower(raw: str) -> list[str]:
+    return [part.strip().lower() for part in raw.split(",") if part.strip()]
+
+
+def _load_category_blacklist() -> None:
+    """Merge YAML blacklist + env overrides into module-level frozensets/tuples."""
+    global BLOCKED_CATEGORY_TABS, CATEGORY_BLACKLIST_KEYWORDS
+    tabs = set(BLOCKED_CATEGORY_TABS)
+    keywords = list(CATEGORY_BLACKLIST_KEYWORDS)
+    path = CATEGORY_BLACKLIST_FILE
+    if path.exists():
+        try:
+            raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            for tab in raw.get("tabs") or []:
+                text = str(tab).strip().lower()
+                if text:
+                    tabs.add(text)
+            file_keywords = [str(k).strip().lower() for k in (raw.get("keywords") or []) if str(k).strip()]
+            if file_keywords:
+                keywords = file_keywords
+        except Exception as exc:
+            print(f"读取类目黑名单失败 {path}: {exc}")
+    if env_tabs := (os.getenv("CATEGORY_BLACKLIST_TABS") or "").strip():
+        tabs.update(_parse_csv_lower(env_tabs))
+    if env_keywords := (os.getenv("CATEGORY_BLACKLIST_KEYWORDS") or "").strip():
+        keywords = _parse_csv_lower(env_keywords)
+    BLOCKED_CATEGORY_TABS = frozenset(tabs)
+    CATEGORY_BLACKLIST_KEYWORDS = tuple(dict.fromkeys(keywords))
+
+
+_load_category_blacklist()
 if max_pages := (os.getenv("MAX_PAGES_PER_CATEGORY") or "").strip():
     MAX_PAGES_PER_CATEGORY = int(max_pages)
     if MAX_PAGES_PER_CATEGORY > 0 and not (os.getenv("MAX_SCROLL_ROUNDS") or "").strip():
@@ -189,23 +308,81 @@ def site_host_from_url(url: str) -> str:
     return urlsplit(site_base_from_url(url)).netloc
 
 
+def category_tab_of(url: str) -> str:
+    query = dict(parse_qsl(urlsplit(url).query, keep_blank_values=True))
+    return unquote(query.get("categoryTab") or "").strip().lower()
+
+
+def _text_hits_blacklist(text: str) -> str | None:
+    """Return the first matching blacklist keyword, else None."""
+    lowered = (text or "").strip().lower()
+    if not lowered:
+        return None
+    # Normalize categoryTab-style tokens for keyword checks.
+    normalized = (
+        lowered.replace("_", " ").replace("%27", "'").replace("'", "'")
+    )
+    for keyword in CATEGORY_BLACKLIST_KEYWORDS:
+        if not keyword:
+            continue
+        # Word/phrase boundary so "coat" does not match "coating".
+        pattern = rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])"
+        if re.search(pattern, normalized):
+            return keyword
+    return None
+
+
+def is_blacklisted_category(*, name: str = "", url: str = "") -> bool:
+    """True if seed name, lv3 label, or calp categoryTab is on the clothing blacklist."""
+    tab = category_tab_of(url) if url else ""
+    if tab and tab in BLOCKED_CATEGORY_TABS:
+        return True
+    if tab and _text_hits_blacklist(tab):
+        return True
+    if name and _text_hits_blacklist(name):
+        return True
+    return False
+
+
+def is_blocked_category_url(url: str) -> bool:
+    return is_blacklisted_category(url=url)
+
+
+def filter_allowed_categories(
+    rows: list[tuple[str, str]],
+) -> list[tuple[str, str]]:
+    allowed: list[tuple[str, str]] = []
+    for name, url in rows:
+        if is_blacklisted_category(name=name, url=url):
+            print(f"跳过黑名单类目：{name}")
+            continue
+        allowed.append((name, url))
+    return allowed
+
+
 def load_categories() -> list[tuple[str, str]]:
     """Load (name, calp_url) from ES crawl index, else categories.yaml."""
     es_index = (os.getenv("ELASTICSEARCH_INDEX_CATEGORIES") or "").strip()
     es_url = (os.getenv("ELASTICSEARCH_URL") or "").strip()
+    rows: list[tuple[str, str]] = []
     if es_index and es_url:
         try:
             rows = _load_categories_from_es(es_url, es_index)
             if rows:
                 print(f"Loaded {len(rows)} categories from ES index={es_index}")
-                return rows
-            print(f"ES index={es_index} empty; falling back to {CATEGORIES_FILE}")
+            else:
+                print(f"ES index={es_index} empty; falling back to {CATEGORIES_FILE}")
         except Exception as exc:
             print(f"ES category load failed ({exc}); falling back to {CATEGORIES_FILE}")
+            rows = []
 
-    with CATEGORIES_FILE.open(encoding="utf-8") as fh:
-        raw = yaml.safe_load(fh)
-    return [(item["name"], item["url"]) for item in raw["categories"]]
+    if not rows:
+        with CATEGORIES_FILE.open(encoding="utf-8") as fh:
+            raw = yaml.safe_load(fh)
+        rows = [(item["name"], item["url"]) for item in raw["categories"]]
+        print(f"Loaded {len(rows)} categories from {CATEGORIES_FILE}")
+
+    return filter_allowed_categories(rows)
 
 
 def _load_categories_from_es(es_url: str, index: str) -> list[tuple[str, str]]:
@@ -1135,10 +1312,32 @@ async def _goto_network(page: Page, url: str, *, worker_id: int = 0) -> None:
             raise
 
 
+async def ensure_seed_category_tab(
+    page: Page, seed_url: str, *, worker_id: int = 0
+) -> None:
+    """If top-nav click drifts to another L1 tab (e.g. women's_clothing), pull back."""
+    if page.is_closed() or not is_calp_url(seed_url):
+        return
+    expected = category_tab_of(seed_url)
+    current = category_tab_of(page.url or "")
+    if not expected:
+        return
+    if current == expected and not is_blocked_category_url(page.url or ""):
+        return
+    worker_log(
+        worker_id,
+        f"类目 tab 跑偏（当前={current or '?'}，期望={expected}），重新打开种子页",
+    )
+    await safe_goto(page, seed_url, worker_id=worker_id)
+
+
 async def safe_goto(page: Page, url: str, *, worker_id: int = 0) -> None:
     """Goto url; if redirected to login/captcha, wait then reopen the target."""
     if page.is_closed():
         raise RuntimeError("浏览器页面已关闭，请重启爬虫")
+    if is_blocked_category_url(url):
+        worker_log(worker_id, f"拒绝打开禁止类目 URL：{url}")
+        raise RuntimeError(f"blocked category URL: {url}")
 
     for recovery in range(1, LOGIN_RECOVERY_RETRIES + 1):
         await _goto_network(page, url, worker_id=worker_id)
@@ -1532,6 +1731,12 @@ async def list_calp_lv3_names(page: Page) -> list[str]:
           const out = [];
           const seen = new Set();
           for (const el of document.querySelectorAll('[class*="lv3Category"]')) {
+            // Ignore top L1 categoryTab links mistaken for lv3 chips.
+            const link = el.closest('a[href*="categoryTab="]') || el.querySelector('a[href*="categoryTab="]');
+            if (link) {
+              const href = link.href || '';
+              if (/categoryTab=women/i.test(href) || /categoryTab=men/i.test(href)) continue;
+            }
             const box = el.closest('[class*="lv3CategoryBox"]') || el;
             const text = (box.innerText || '').trim().replace(/\\s+/g, ' ');
             const name = text.split('\\n').map(s => s.trim()).filter(Boolean).pop() || text;
@@ -1545,11 +1750,17 @@ async def list_calp_lv3_names(page: Page) -> list[str]:
         }
         """
     )
-    return list(names or [])
+    return [
+        name
+        for name in (names or [])
+        if not is_blacklisted_category(name=name)
+    ]
 
 
 async def click_calp_lv3(page: Page, name: str) -> bool:
     await dismiss_popups(page)
+    if is_blacklisted_category(name=name):
+        return False
     return bool(
         await page.evaluate(
             """
@@ -1559,6 +1770,14 @@ async def click_calp_lv3(page: Page, name: str) -> bool:
                 '[class*="lv3CategoryBox"], [class*="lv3Category"]'
               )];
               for (const el of nodes) {
+                const link = el.closest('a[href*="categoryTab="]')
+                  || el.querySelector('a[href*="categoryTab="]');
+                if (link) {
+                  const href = (link.href || '').toLowerCase();
+                  if (href.includes('clothing') && (href.includes('women') || href.includes('men'))) {
+                    continue;
+                  }
+                }
                 const text = (el.innerText || '').trim().replace(/\\s+/g, ' ');
                 const label = text.split('\\n').map(s => s.trim()).filter(Boolean).pop() || text;
                 if (label.toLowerCase() !== want && !label.toLowerCase().startsWith(want)) {
@@ -1939,6 +2158,9 @@ async def crawl_category(
                 f"发现 {len(lv3_names)} 个 calp 子类目图标：{category_name}",
             )
         for sub_name in lv3_names:
+            if is_blacklisted_category(name=sub_name):
+                worker_log(worker_id, f"跳过黑名单子类目：{sub_name}")
+                continue
             target_name = f"{category_name} > {sub_name}"
             worker_log(worker_id, f"子类目（点击）：{target_name}")
             if CALP_RELOAD_EACH_LV3:
@@ -1951,10 +2173,16 @@ async def crawl_category(
                     continue
                 if CALP_CLICK_SETTLE_MS > 0:
                     await page.wait_for_timeout(CALP_CLICK_SETTLE_MS)
+                await ensure_seed_category_tab(page, category_url, worker_id=worker_id)
             elif not await _prepare_calp_lv3(
                 page, category_url, sub_name, worker_id=worker_id
             ):
                 worker_log(worker_id, f"未能点击子类目：{sub_name}")
+                continue
+            await ensure_seed_category_tab(page, category_url, worker_id=worker_id)
+            if is_blocked_category_url(page.url or ""):
+                worker_log(worker_id, f"点子类后落到禁止类目，跳过：{page.url}")
+                await safe_goto(page, category_url, worker_id=worker_id)
                 continue
             collector.clear()
             total_new += await crawl_infinite_scroll(
@@ -2209,6 +2437,10 @@ async def main_async() -> None:
     if LISTING_STAR_FILTER:
         filter_bits.append(f"selectedSwitches=filterCode:{LISTING_STAR_FILTER}")
     print(f"列表过滤: {', '.join(filter_bits) if filter_bits else '关闭'}")
+    print(
+        f"类目黑名单: {len(BLOCKED_CATEGORY_TABS)} tabs / "
+        f"{len(CATEGORY_BLACKLIST_KEYWORDS)} keywords <- {CATEGORY_BLACKLIST_FILE.name}"
+    )
     print()
 
     seen_links = load_seen_links()

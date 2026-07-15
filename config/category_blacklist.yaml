@@ -1,0 +1,85 @@
+# Category blacklist — seeds / calp tabs / lv3 labels matching these are skipped.
+# Override keywords via CATEGORY_BLACKLIST_KEYWORDS=foo,bar in .env
+# Override tabs via CATEGORY_BLACKLIST_TABS=women's_clothing,men's_clothing
+
+tabs:
+  # Apparel L1
+  - women's_clothing
+  - men's_clothing
+  - women_s_clothing
+  - men_s_clothing
+  # Sensitive / adult-adjacent L1 on AliExpress US
+  - novelty_&_special_use
+  - novelty_%26_special_use
+
+# Matched with word/phrase boundaries against name / lv3 / categoryTab (lowercase).
+keywords:
+  # --- clothing ---
+  - women's clothing
+  - men's clothing
+  - apparel
+  - clothing
+  - clothes
+  - dress
+  - dresses
+  - shirt
+  - shirts
+  - blouse
+  - skirt
+  - skirts
+  - jeans
+  - hoodie
+  - sweatshirt
+  - sweater
+  - jacket
+  - jackets
+  - coat
+  - coats
+  - underwear
+  - lingerie
+  - swimsuit
+  - swimwear
+  - bikini
+  - t-shirt
+  - tshirt
+  - tops &
+  - pants
+  - trousers
+  - shorts
+  - socks
+  - activewear
+  - sportswear
+  # --- adult / sensitive ---
+  - novelty & special use
+  - novelty and special use
+  - adult novelty
+  - adult product
+  - adult products
+  - adult toy
+  - adult toys
+  - adult sex
+  - sex toy
+  - sex toys
+  - sex product
+  - sex products
+  - erotic
+  - erotica
+  - vibrator
+  - vibrators
+  - dildo
+  - dildos
+  - masturbator
+  - masturbation
+  - bdsm
+  - fetish
+  - bondage
+  - intimate toy
+  - intimate toys
+  - pleasure toy
+  - pleasure toys
+  - sexy lingerie
+  - adult entertainment
+  - 成人
+  - 情趣
+  - 性用品
+  - 成人用品
