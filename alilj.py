@@ -154,9 +154,49 @@ def site_host_from_url(url: str) -> str:
 
 
 def load_categories() -> list[tuple[str, str]]:
+    """Load (name, calp_url) from ES crawl index, else categories.yaml."""
+    es_index = (os.getenv("ELASTICSEARCH_INDEX_CATEGORIES") or "").strip()
+    es_url = (os.getenv("ELASTICSEARCH_URL") or "").strip()
+    if es_index and es_url:
+        try:
+            rows = _load_categories_from_es(es_url, es_index)
+            if rows:
+                print(f"Loaded {len(rows)} categories from ES index={es_index}")
+                return rows
+            print(f"ES index={es_index} empty; falling back to {CATEGORIES_FILE}")
+        except Exception as exc:
+            print(f"ES category load failed ({exc}); falling back to {CATEGORIES_FILE}")
+
     with CATEGORIES_FILE.open(encoding="utf-8") as fh:
         raw = yaml.safe_load(fh)
     return [(item["name"], item["url"]) for item in raw["categories"]]
+
+
+def _load_categories_from_es(es_url: str, index: str) -> list[tuple[str, str]]:
+    client = Elasticsearch(hosts=[es_url], request_timeout=60)
+    enabled_only = (os.getenv("CATEGORIES_ENABLED_ONLY") or "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+    }
+    must: list[dict] = []
+    if enabled_only:
+        must.append({"term": {"enabled": True}})
+    query: dict = {"match_all": {}} if not must else {"bool": {"must": must}}
+    resp = client.search(
+        index=index,
+        size=500,
+        query=query,
+        sort=[{"priority": {"order": "asc", "unmapped_type": "long"}}],
+    )
+    rows: list[tuple[str, str]] = []
+    for hit in resp.get("hits", {}).get("hits", []):
+        src = hit.get("_source") or {}
+        name = str(src.get("name") or "").strip()
+        url = str(src.get("url") or "").strip()
+        if name and url:
+            rows.append((name, url))
+    return rows
 
 
 def category_path_depth(category_name: str) -> int:

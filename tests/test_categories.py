@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -20,6 +21,14 @@ CATEGORY_URL_RE = re.compile(
 
 
 class CategoryConfigTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # Prefer YAML fixtures for unit tests (ignore live ES seeds).
+        self._old_es_cats = os.environ.pop("ELASTICSEARCH_INDEX_CATEGORIES", None)
+
+    def tearDown(self) -> None:
+        if self._old_es_cats is not None:
+            os.environ["ELASTICSEARCH_INDEX_CATEGORIES"] = self._old_es_cats
+
     def test_category_path_depth(self) -> None:
         self.assertEqual(category_path_depth("US / Shoes"), 1)
         self.assertEqual(category_path_depth("US / Apparel & Accessories > Women"), 2)
