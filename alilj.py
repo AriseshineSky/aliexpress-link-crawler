@@ -7,6 +7,7 @@ AliExpress 商品链接抓取（alilj.py）。
 默认只抓 aliexpress.us；支持 calp 子类目点击、滑块验证码自动拖动 + 手动兜底。
 默认偏提速：短间隔、滚动等列表 API、feedback 补全新商品评分、calp 页内点子类。
 多 worker 并行：分类入队，CRAWL_WORKERS 个独立浏览器各自领取类目。
+多设备：ES 类目索引认领（claimed + lease），抓完标记 done 并写产品数。
 输出：产品链接.txt、产品列表.jsonl、Elasticsearch（ELASTICSEARCH_INDEX_URLS）
 """
 
@@ -31,6 +32,13 @@ import yaml
 from dotenv import load_dotenv
 from elasticsearch import Elasticsearch, helpers
 from playwright.async_api import BrowserContext, Page, async_playwright
+
+from category_claim import (
+    CategoryClaimClient,
+    CategoryCrawlStats,
+    ClaimedCategory,
+    default_device_id,
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 USER_DATA_DIR = BASE_DIR / "browser"
@@ -60,6 +68,13 @@ GOTO_MAX_RETRIES = 5
 GOTO_RETRY_BASE_DELAY_S = 5
 CRAWL_WORKERS = 2  # 并行 worker 数；每个 worker 独立浏览器，从队列领取分类
 LOGIN_RECOVERY_RETRIES = 8  # 登录/风控拦截后重新打开目标页的次数
+# Multi-device ES category claim (requires ELASTICSEARCH_INDEX_CATEGORIES).
+CATEGORY_CLAIM_MODE = True  # auto-disabled when ES categories unavailable
+CLAIM_BATCH_SIZE = 0  # 0 = CRAWL_WORKERS（每批给本机所有 worker）
+CLAIM_LEASE_SECONDS = 7200  # 占用租约；超时可被其他设备回收
+CLAIM_HEARTBEAT_SECONDS = 900  # 抓取中续租间隔
+DEVICE_ID = ""  # 空 = hostname；多机请设不同值
+CRAWL_RECLAIM_DONE = False  # True = 重新抓已 done 的类目
 # 打开分类/列表页时附加的 URL 过滤（与站内 selectedSwitches / minPrice / maxPrice 一致）
 LISTING_MAX_PRICE = "99"  # 空字符串 = 不加价格上限
 LISTING_MIN_PRICE = ""  # 空字符串 = 不加价格下限
@@ -253,6 +268,20 @@ if crawl_workers := (os.getenv("CRAWL_WORKERS") or "").strip():
     CRAWL_WORKERS = max(1, int(crawl_workers))
 if login_retries := (os.getenv("LOGIN_RECOVERY_RETRIES") or "").strip():
     LOGIN_RECOVERY_RETRIES = max(1, int(login_retries))
+if (os.getenv("CATEGORY_CLAIM_MODE") or "").strip().lower() in {"0", "false", "no"}:
+    CATEGORY_CLAIM_MODE = False
+if (os.getenv("CATEGORY_CLAIM_MODE") or "").strip().lower() in {"1", "true", "yes"}:
+    CATEGORY_CLAIM_MODE = True
+if claim_batch := (os.getenv("CLAIM_BATCH_SIZE") or "").strip():
+    CLAIM_BATCH_SIZE = max(0, int(claim_batch))
+if claim_lease := (os.getenv("CLAIM_LEASE_SECONDS") or "").strip():
+    CLAIM_LEASE_SECONDS = max(60, int(claim_lease))
+if claim_hb := (os.getenv("CLAIM_HEARTBEAT_SECONDS") or "").strip():
+    CLAIM_HEARTBEAT_SECONDS = max(30, int(claim_hb))
+if device_id_env := (os.getenv("DEVICE_ID") or "").strip():
+    DEVICE_ID = device_id_env
+if (os.getenv("CRAWL_RECLAIM_DONE") or "").strip().lower() in {"1", "true", "yes"}:
+    CRAWL_RECLAIM_DONE = True
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -645,9 +674,17 @@ class ListingCollector:
 
     def __init__(self) -> None:
         self.search_payloads: list[dict] = []
+        self.listing_total: int | None = None
 
     def clear(self) -> None:
         self.search_payloads.clear()
+        self.listing_total = None
+
+    def note_listing_total(self, total: int | None) -> None:
+        if total is None or total <= 0:
+            return
+        if self.listing_total is None or total > self.listing_total:
+            self.listing_total = total
 
     async def handle_response(self, response) -> None:
         url = response.url
@@ -662,6 +699,7 @@ class ListingCollector:
             return
         if any(marker in url.lower() for marker in LIST_API_URL_MARKERS):
             self.search_payloads.append(payload)
+            self.note_listing_total(_extract_listing_total_from_payload(payload))
             if len(self.search_payloads) > 40:
                 del self.search_payloads[:-40]
 
@@ -675,6 +713,79 @@ class ListingCollector:
                 seen.add(item.product_id)
                 products.append(item)
         return products
+
+
+def _extract_listing_total_from_payload(payload: dict) -> int | None:
+    """Best-effort total result count from list/recommend API JSON."""
+    found: list[int] = []
+
+    def walk(node, depth: int = 0) -> None:
+        if depth > 10 or len(found) >= 8:
+            return
+        if isinstance(node, dict):
+            for key, value in node.items():
+                key_l = str(key).lower()
+                if key_l in {
+                    "totalcount",
+                    "total",
+                    "totalsearchcount",
+                    "totalresults",
+                    "resultcount",
+                    "itemcount",
+                    "productcount",
+                    "productscount",
+                    "numfound",
+                    "totalitems",
+                    "totalnum",
+                    "totalhits",
+                    "estimatedtotal",
+                }:
+                    parsed = _digits(value) if not isinstance(value, bool) else None
+                    if parsed is not None and parsed > 0:
+                        found.append(parsed)
+                if isinstance(value, (dict, list)):
+                    walk(value, depth + 1)
+        elif isinstance(node, list):
+            for item in node[:30]:
+                walk(item, depth + 1)
+
+    walk(payload)
+    return max(found) if found else None
+
+
+async def extract_listing_total_from_dom(page: Page) -> int | None:
+    """Read result-count text from the listing page when present."""
+    try:
+        raw = await page.evaluate(
+            """
+            () => {
+              const body = (document.body && document.body.innerText) || '';
+              const patterns = [
+                /([\\d,]+)\\+?\\s*results?/i,
+                /([\\d,]+)\\+?\\s*items?/i,
+                /([\\d,]+)\\+?\\s*products?/i,
+                /over\\s+([\\d,]+)/i,
+              ];
+              for (const re of patterns) {
+                const m = body.match(re);
+                if (m) return m[1];
+              }
+              const nodes = document.querySelectorAll(
+                '[class*="result"], [class*="Result"], [class*="total"], [class*="Total"]'
+              );
+              for (const el of nodes) {
+                const t = (el.innerText || '').trim();
+                if (t.length > 40) continue;
+                const m = t.match(/([\\d,]+)\\+?/);
+                if (m && /result|item|product/i.test(t)) return m[1];
+              }
+              return null;
+            }
+            """
+        )
+    except Exception:
+        return None
+    return _digits(raw)
 
 
 def _product_from_api_fields(
@@ -1973,9 +2084,9 @@ async def crawl_infinite_scroll(
     *,
     worker_id: int = 0,
     listing_url: str | None = None,
-) -> int:
+) -> CategoryCrawlStats:
     """Scroll until consecutive rounds yield no new product IDs."""
-    total_new = 0
+    stats = CategoryCrawlStats()
     seen_ids: set[str] = set()
     enriched_ids: set[str] = set()
     metrics_by_id: dict[str, ListingProduct] = {}
@@ -2004,6 +2115,7 @@ async def crawl_infinite_scroll(
             if listing_url and await is_login_page(page):
                 await safe_goto(page, listing_url, worker_id=worker_id)
         products = await extract_products(page, site_base, collector)
+        collector.note_listing_total(await extract_listing_total_from_dom(page))
 
         # Re-apply metrics gathered earlier this category run (esp. feedback enrich).
         restored: list[ListingProduct] = []
@@ -2052,15 +2164,20 @@ async def crawl_infinite_scroll(
         new_count = save_new_products(products, seen_links, category_name, es_writer)
         if es_writer is not None:
             es_writer.flush()
-        total_new += new_count
+        stats.new_count += new_count
         with_metrics = sum(
             1 for p in products if p.rating is not None and p.reviews is not None
+        )
+        total_hint = (
+            f"，页面/API 宣称总数 {collector.listing_total}"
+            if collector.listing_total is not None
+            else ""
         )
         worker_log(
             worker_id,
             f"滚动第 {round_no} 轮：可见/API 合计 {len(products)} 个"
             f"（{with_metrics} 个含评分+评论数），"
-            f"本轮新 ID {len(fresh)} 个，保存新增 {new_count} 个",
+            f"本轮新 ID {len(fresh)} 个，保存新增 {new_count} 个{total_hint}",
         )
 
         if (not current_ids or not fresh) and round_no > 1:
@@ -2079,7 +2196,9 @@ async def crawl_infinite_scroll(
 
         await sleep(short=True)
 
-    return total_new
+    stats.product_count = len(seen_ids)
+    stats.listing_total = collector.listing_total
+    return stats
 
 
 async def _prepare_calp_lv3(
@@ -2115,12 +2234,19 @@ async def crawl_category(
     collector: ListingCollector,
     es_writer: ElasticsearchUrlWriter | None = None,
     worker_id: int = 0,
-) -> int:
-    total_new = 0
+) -> CategoryCrawlStats:
+    stats = CategoryCrawlStats()
     category_url = with_listing_filters(category_url)
     site_base = site_base_from_url(category_url)
     worker_log(worker_id, f"类目：{category_name}")
     worker_log(worker_id, f"打开：{category_url}")
+
+    def _merge(part: CategoryCrawlStats) -> None:
+        stats.new_count += part.new_count
+        stats.product_count += part.product_count
+        if part.listing_total is not None:
+            if stats.listing_total is None or part.listing_total > stats.listing_total:
+                stats.listing_total = part.listing_total
 
     collector.clear()
     await safe_goto(page, category_url, worker_id=worker_id)
@@ -2128,15 +2254,17 @@ async def crawl_category(
     await handle_captcha(page, worker_id=worker_id)
     await sleep()
 
-    total_new += await crawl_infinite_scroll(
-        page,
-        category_name,
-        site_base,
-        seen_links,
-        collector,
-        es_writer,
-        worker_id=worker_id,
-        listing_url=category_url,
+    _merge(
+        await crawl_infinite_scroll(
+            page,
+            category_name,
+            site_base,
+            seen_links,
+            collector,
+            es_writer,
+            worker_id=worker_id,
+            listing_url=category_url,
+        )
     )
 
     if is_calp_url(category_url) and CRAWL_SUBCATEGORIES and " > " not in category_name:
@@ -2185,15 +2313,17 @@ async def crawl_category(
                 await safe_goto(page, category_url, worker_id=worker_id)
                 continue
             collector.clear()
-            total_new += await crawl_infinite_scroll(
-                page,
-                target_name,
-                site_base,
-                seen_links,
-                collector,
-                es_writer,
-                worker_id=worker_id,
-                listing_url=category_url,
+            _merge(
+                await crawl_infinite_scroll(
+                    page,
+                    target_name,
+                    site_base,
+                    seen_links,
+                    collector,
+                    es_writer,
+                    worker_id=worker_id,
+                    listing_url=category_url,
+                )
             )
 
     elif (not is_calp_url(category_url)) and " > " not in category_name:
@@ -2203,18 +2333,20 @@ async def crawl_category(
         await safe_goto(page, wholesale, worker_id=worker_id)
         await dismiss_popups(page)
         await handle_captcha(page, worker_id=worker_id)
-        total_new += await crawl_infinite_scroll(
-            page,
-            category_name,
-            site_base,
-            seen_links,
-            collector,
-            es_writer,
-            worker_id=worker_id,
-            listing_url=wholesale,
+        _merge(
+            await crawl_infinite_scroll(
+                page,
+                category_name,
+                site_base,
+                seen_links,
+                collector,
+                es_writer,
+                worker_id=worker_id,
+                listing_url=wholesale,
+            )
         )
 
-    return total_new
+    return stats
 
 
 async def create_browser(
@@ -2281,13 +2413,16 @@ async def process_category_seed(
     es_writer: ElasticsearchUrlWriter,
     *,
     workers: int = 1,
-) -> int:
+    claim_client: CategoryClaimClient | None = None,
+    claim_doc_id: str | None = None,
+) -> CategoryCrawlStats:
     """Discover classic subcats (if needed) and crawl one seed category tree."""
-    total_new = 0
+    stats = CategoryCrawlStats()
     context: BrowserContext | None = None
     page: Page | None = None
     collector: ListingCollector | None = None
     targets = [(category_name, category_url)]
+    heartbeat_task: asyncio.Task | None = None
 
     async def ensure_browser() -> tuple[BrowserContext, Page, ListingCollector]:
         nonlocal context, page, collector
@@ -2299,7 +2434,21 @@ async def process_category_seed(
         assert collector is not None
         return context, page, collector
 
+    async def heartbeat_loop() -> None:
+        if claim_client is None or not claim_doc_id:
+            return
+        while True:
+            await asyncio.sleep(CLAIM_HEARTBEAT_SECONDS)
+            ok = await asyncio.to_thread(claim_client.heartbeat, claim_doc_id)
+            if ok:
+                worker_log(worker_id, f"续租类目：{category_name}")
+            else:
+                worker_log(worker_id, f"续租失败（可能租约丢失）：{category_name}")
+
     try:
+        if claim_client is not None and claim_doc_id:
+            heartbeat_task = asyncio.create_task(heartbeat_loop())
+
         # Classic /category/ seeds still auto-discover linked subcats.
         # Calp-plus lv3 icons are clicked inside crawl_category.
         if (
@@ -2337,7 +2486,7 @@ async def process_category_seed(
             for attempt in range(2):
                 try:
                     _, page, collector = await ensure_browser()
-                    total_new += await crawl_category(
+                    part = await crawl_category(
                         page,
                         target_name,
                         target_url,
@@ -2346,6 +2495,14 @@ async def process_category_seed(
                         es_writer,
                         worker_id=worker_id,
                     )
+                    stats.new_count += part.new_count
+                    stats.product_count += part.product_count
+                    if part.listing_total is not None:
+                        if (
+                            stats.listing_total is None
+                            or part.listing_total > stats.listing_total
+                        ):
+                            stats.listing_total = part.listing_total
                     break
                 except Exception as exc:
                     if is_browser_dead(exc, page=page) and attempt == 0:
@@ -2356,19 +2513,52 @@ async def process_category_seed(
                         continue
                     raise
     finally:
+        if heartbeat_task is not None:
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
         await close_browser(context)
 
-    return total_new
+    return stats
+
+
+def build_claim_client() -> CategoryClaimClient | None:
+    if not CATEGORY_CLAIM_MODE:
+        return None
+    es_index = (os.getenv("ELASTICSEARCH_INDEX_CATEGORIES") or "").strip()
+    es_url = (os.getenv("ELASTICSEARCH_URL") or "").strip()
+    if not es_index or not es_url:
+        return None
+    enabled_only = (os.getenv("CATEGORIES_ENABLED_ONLY") or "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+    }
+    client = CategoryClaimClient(
+        es_url,
+        es_index,
+        device_id=DEVICE_ID,
+        lease_seconds=CLAIM_LEASE_SECONDS,
+        reclaim_done=CRAWL_RECLAIM_DONE,
+        enabled_only=enabled_only,
+    )
+    return client if client.enabled else None
 
 
 async def crawl_worker(
     playwright,
     worker_id: int,
-    category_queue: asyncio.Queue[tuple[str, str] | None],
+    category_queue: asyncio.Queue,
     seen_links: set[str],
     es_writer: ElasticsearchUrlWriter,
     *,
     workers: int = 1,
+    claim_client: CategoryClaimClient | None = None,
+    refill_lock: asyncio.Lock | None = None,
+    claim_batch_size: int = 1,
+    exhausted: dict | None = None,
 ) -> int:
     total_new = 0
     # Stagger launches so windows tile cleanly and logins aren't all at once.
@@ -2378,30 +2568,111 @@ async def crawl_worker(
         worker_id,
         f"启动，浏览器目录: {worker_user_data_dir(worker_id)}",
     )
+
+    async def next_item():
+        """Get next category; in claim mode refill a batch when local queue is empty."""
+        if claim_client is None or refill_lock is None or exhausted is None:
+            return await category_queue.get()
+
+        while True:
+            try:
+                return category_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            async with refill_lock:
+                if exhausted.get("done"):
+                    return None
+                try:
+                    return category_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+                batch = await asyncio.to_thread(
+                    claim_client.claim_batch, claim_batch_size
+                )
+                if not batch:
+                    exhausted["done"] = True
+                    worker_log(worker_id, "ES 无可认领类目，本机收工。")
+                    return None
+                names = ", ".join(c.name for c in batch)
+                print(
+                    f"[claim] device={claim_client.device_id} "
+                    f"认领 {len(batch)} 个：{names}"
+                )
+                for cat in batch:
+                    await category_queue.put(cat)
+                return category_queue.get_nowait()
+
     while True:
-        item = await category_queue.get()
+        item = await next_item()
         try:
             if item is None:
                 return total_new
-            category_name, category_url = item
+
+            claim_doc_id: str | None = None
+            if isinstance(item, ClaimedCategory):
+                category_name, category_url = item.name, item.url
+                claim_doc_id = item.doc_id
+            else:
+                category_name, category_url = item
+
             worker_log(worker_id, f"领取类目：{category_name}")
-            total_new += await process_category_seed(
-                playwright,
-                worker_id,
-                category_name,
-                category_url,
-                seen_links,
-                es_writer,
-                workers=workers,
-            )
-            worker_log(worker_id, f"完成类目：{category_name}（累计新增 {total_new}）")
+            try:
+                stats = await process_category_seed(
+                    playwright,
+                    worker_id,
+                    category_name,
+                    category_url,
+                    seen_links,
+                    es_writer,
+                    workers=workers,
+                    claim_client=claim_client,
+                    claim_doc_id=claim_doc_id,
+                )
+                total_new += stats.new_count
+                if claim_client is not None and claim_doc_id:
+                    await asyncio.to_thread(
+                        claim_client.complete,
+                        claim_doc_id,
+                        product_count=stats.product_count,
+                        new_count=stats.new_count,
+                        listing_total=stats.listing_total,
+                    )
+                total_hint = (
+                    f"，页面宣称 {stats.listing_total}"
+                    if stats.listing_total is not None
+                    else ""
+                )
+                worker_log(
+                    worker_id,
+                    f"完成类目：{category_name}（本类目 ID {stats.product_count}，"
+                    f"新增 {stats.new_count}{total_hint}；累计新增 {total_new}）",
+                )
+            except Exception as exc:
+                worker_log(worker_id, f"类目失败：{category_name}: {exc}")
+                if claim_client is not None and claim_doc_id:
+                    await asyncio.to_thread(
+                        claim_client.fail, claim_doc_id, str(exc)
+                    )
+                # Keep other workers alive; failed seed is marked for reclaim.
+                continue
         finally:
-            category_queue.task_done()
+            if claim_client is None:
+                category_queue.task_done()
 
 
 async def main_async() -> None:
-    categories = load_categories()
-    workers = min(CRAWL_WORKERS, max(1, len(categories)))
+    claim_client = build_claim_client()
+    claim_mode = claim_client is not None
+    device = default_device_id(DEVICE_ID)
+    batch_size = CLAIM_BATCH_SIZE if CLAIM_BATCH_SIZE > 0 else CRAWL_WORKERS
+
+    categories: list[tuple[str, str]] = []
+    if not claim_mode:
+        categories = load_categories()
+        workers = min(CRAWL_WORKERS, max(1, len(categories)))
+    else:
+        workers = max(1, CRAWL_WORKERS)
+
     print("=" * 60)
     print("AliExpress 商品链接抓取 (alilj.py)")
     print("=" * 60)
@@ -2415,7 +2686,17 @@ async def main_async() -> None:
     print(f"登录恢复重试: 最多 {LOGIN_RECOVERY_RETRIES} 次")
     print(f"商品链接文件: {LINKS_FILE}")
     print(f"商品列表文件: {PRODUCTS_JSONL}")
-    print(f"类目数量: {len(categories)}（US）")
+    if claim_mode:
+        assert claim_client is not None
+        print(
+            f"多设备认领: 开启（device={claim_client.device_id}，"
+            f"batch={batch_size}，lease={CLAIM_LEASE_SECONDS}s）"
+        )
+        print(f"类目索引: {claim_client.index}")
+        print(f"重抓已完成: {'是' if CRAWL_RECLAIM_DONE else '否'}")
+    else:
+        print(f"多设备认领: 关闭（本地队列，共 {len(categories)} 个类目）")
+        print(f"类目数量: {len(categories)}（US）")
     print(f"子类目发现: {'开启' if CRAWL_SUBCATEGORIES else '关闭'}")
     if CRAWL_SUBCATEGORIES:
         print(f"子类目最大深度: {MAX_SUBCATEGORY_DEPTH}")
@@ -2445,11 +2726,28 @@ async def main_async() -> None:
 
     seen_links = load_seen_links()
     es_writer = ElasticsearchUrlWriter()
-    category_queue: asyncio.Queue[tuple[str, str] | None] = asyncio.Queue()
-    for item in categories:
-        await category_queue.put(item)
-    for _ in range(workers):
-        await category_queue.put(None)
+    category_queue: asyncio.Queue = asyncio.Queue()
+    refill_lock = asyncio.Lock()
+    exhausted = {"done": False}
+
+    if claim_mode:
+        assert claim_client is not None
+        first = await asyncio.to_thread(claim_client.claim_batch, batch_size)
+        if not first:
+            print("ES 无可认领类目（均已 claimed/done，或未 enabled）。退出。")
+            es_writer.close()
+            return
+        print(
+            f"[claim] device={device} 首批认领 {len(first)} 个："
+            + ", ".join(c.name for c in first)
+        )
+        for cat in first:
+            await category_queue.put(cat)
+    else:
+        for item in categories:
+            await category_queue.put(item)
+        for _ in range(workers):
+            await category_queue.put(None)
 
     async with async_playwright() as playwright:
         results = await asyncio.gather(
@@ -2461,6 +2759,10 @@ async def main_async() -> None:
                     seen_links,
                     es_writer,
                     workers=workers,
+                    claim_client=claim_client if claim_mode else None,
+                    refill_lock=refill_lock if claim_mode else None,
+                    claim_batch_size=batch_size,
+                    exhausted=exhausted if claim_mode else None,
                 )
                 for worker_id in range(workers)
             ]
@@ -2470,6 +2772,8 @@ async def main_async() -> None:
 
     print("\n完成。")
     print(f"并行 worker: {workers}")
+    if claim_mode:
+        print(f"设备 ID: {device}")
     print(f"累计商品数: {len(seen_links)}")
     print(f"本次新增: {total_new}")
     print(f"链接文件: {LINKS_FILE}")
