@@ -4,10 +4,13 @@ AliExpress 商品链接抓取（alilj.py）。
 
 只抓列表页，不抓详情；从列表页 API + DOM 提取价格、评分、评论数、销量。
 首页分类入口为 /p/calp-plus/?categoryTab=...，商品靠无限下滑加载（非 ?page=N）。
-默认只抓 aliexpress.us；支持 calp 子类目点击、滑块验证码自动拖动 + 手动兜底。
-默认偏提速：短间隔、滚动等列表 API、feedback 补全新商品评分、calp 页内点子类。
+默认附加 maxPrice / 4StarRating / SortType=total_tranpro_desc（销量优先）。
+页面无 reviews 数量排序；本地 QUALITY_* 仅统计质量通过数，抓到的 id 一律写入 ES/本地。
+calp 子类目：发现后写入 ES 为批发搜索 URL（可认领），并循环抓取各 URL。
+默认只抓 aliexpress.us；支持滑块验证码自动拖动 + 手动兜底。
 多 worker 并行：分类入队，CRAWL_WORKERS 个独立浏览器各自领取类目。
 多设备：ES 类目索引认领（claimed + lease），抓完标记 done 并写产品数。
+CRAWL_LOOP=1 时整轮结束后重置 pending 并重复；轮次时间写入 __crawl_round__。
 输出：产品链接.txt、产品列表.jsonl、Elasticsearch（ELASTICSEARCH_INDEX_URLS）
 """
 
@@ -79,8 +82,25 @@ CRAWL_RECLAIM_DONE = False  # True = 重新抓已 done 的类目
 LISTING_MAX_PRICE = "99"  # 空字符串 = 不加价格上限
 LISTING_MIN_PRICE = ""  # 空字符串 = 不加价格下限
 LISTING_STAR_FILTER = "4StarRating"  # 空字符串 = 不加星级开关；例: 4StarRating
+# SortType works on /w/wholesale-*.html and /category/*.html; also attached to calp URLs.
+# AliExpress has NO listing SortType for review-count — use QUALITY_MIN_REVIEWS locally.
+LISTING_SORT_TYPE = "total_tranpro_desc"  # orders/sold desc; empty = no SortType
+# Local quality gate after enrich (page cannot filter reviews/sold). 0/empty = off.
+QUALITY_FILTER = True
+QUALITY_MAX_PRICE = 100.0
+QUALITY_MIN_RATING = 4.4
+QUALITY_MIN_REVIEWS = 300
+QUALITY_MIN_SOLD = 500
+# Discover calp lv3 → upsert wholesale URLs into ES as separate claimable seeds.
+SUBCATEGORY_AS_SEEDS = True
+# Continuous crawl: after a full pass, reset all seeds to pending and repeat.
+CRAWL_LOOP = True
+CRAWL_LOOP_SLEEP_SEC = 120
 # Serialize local file + shared seen_links updates across workers.
 FILE_IO_LOCK = threading.Lock()
+# Current crawl round number (set in main_async).
+CURRENT_CRAWL_ROUND = 0
+
 LOGIN_URL_MARKERS = (
     "login.aliexpress.",
     "passport.aliexpress.",
@@ -264,6 +284,30 @@ if (min_price := os.getenv("LISTING_MIN_PRICE")) is not None:
     LISTING_MIN_PRICE = min_price.strip()
 if (star_filter := os.getenv("LISTING_STAR_FILTER")) is not None:
     LISTING_STAR_FILTER = star_filter.strip()
+if (sort_type := os.getenv("LISTING_SORT_TYPE")) is not None:
+    LISTING_SORT_TYPE = sort_type.strip()
+if (os.getenv("QUALITY_FILTER") or "").strip().lower() in {"0", "false", "no"}:
+    QUALITY_FILTER = False
+if (os.getenv("QUALITY_FILTER") or "").strip().lower() in {"1", "true", "yes"}:
+    QUALITY_FILTER = True
+if (q_max := os.getenv("QUALITY_MAX_PRICE")) is not None and q_max.strip():
+    QUALITY_MAX_PRICE = float(q_max.strip())
+if (q_rating := os.getenv("QUALITY_MIN_RATING")) is not None and q_rating.strip():
+    QUALITY_MIN_RATING = float(q_rating.strip())
+if (q_rev := os.getenv("QUALITY_MIN_REVIEWS")) is not None and q_rev.strip():
+    QUALITY_MIN_REVIEWS = int(q_rev.strip())
+if (q_sold := os.getenv("QUALITY_MIN_SOLD")) is not None and q_sold.strip():
+    QUALITY_MIN_SOLD = int(q_sold.strip())
+if (os.getenv("SUBCATEGORY_AS_SEEDS") or "").strip().lower() in {"0", "false", "no"}:
+    SUBCATEGORY_AS_SEEDS = False
+if (os.getenv("SUBCATEGORY_AS_SEEDS") or "").strip().lower() in {"1", "true", "yes"}:
+    SUBCATEGORY_AS_SEEDS = True
+if (os.getenv("CRAWL_LOOP") or "").strip().lower() in {"0", "false", "no"}:
+    CRAWL_LOOP = False
+if (os.getenv("CRAWL_LOOP") or "").strip().lower() in {"1", "true", "yes"}:
+    CRAWL_LOOP = True
+if loop_sleep := (os.getenv("CRAWL_LOOP_SLEEP_SEC") or "").strip():
+    CRAWL_LOOP_SLEEP_SEC = max(0, int(loop_sleep))
 if crawl_workers := (os.getenv("CRAWL_WORKERS") or "").strip():
     CRAWL_WORKERS = max(1, int(crawl_workers))
 if login_retries := (os.getenv("LOGIN_RECOVERY_RETRIES") or "").strip():
@@ -1065,6 +1109,7 @@ class ElasticsearchUrlWriter:
                 fields["reviews"] = product.reviews
             if product.sold_count is not None:
                 fields["sold_count"] = product.sold_count
+            fields["quality_passed"] = product_passes_quality(product)
 
             upsert = dict(fields)
             upsert["created_at"] = now
@@ -1119,10 +1164,15 @@ class ElasticsearchUrlWriter:
 
 
 def with_listing_filters(url: str) -> str:
-    """Attach price / star filters used by AliExpress category & search pages.
+    """Attach price / star / SortType filters used by AliExpress listing pages.
 
     Example:
-      ...&selectedSwitches=filterCode%3A4StarRating&maxPrice=99
+      ...&selectedSwitches=filterCode%3A4StarRating&maxPrice=99&SortType=total_tranpro_desc
+
+    Notes:
+    - SortType=total_tranpro_desc sorts by orders/sold (works on wholesale & category).
+    - Calp-plus may ignore SortType in the SPA; we still attach it and also try UI click.
+    - There is no official SortType for review-count; filter reviews locally.
     """
     parts = urlsplit(url)
     query = dict(parse_qsl(parts.query, keep_blank_values=True))
@@ -1135,17 +1185,89 @@ def with_listing_filters(url: str) -> str:
         if not code.startswith("filterCode:"):
             code = f"filterCode:{code}"
         query["selectedSwitches"] = code
+    if LISTING_SORT_TYPE:
+        # Prefer capital SortType (AE wholesale); also set sortType for some pages.
+        query["SortType"] = LISTING_SORT_TYPE
+        query.setdefault("sortType", LISTING_SORT_TYPE)
     return urlunsplit(
         (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
     )
 
 
-def wholesale_search_url(category_name: str, site_base: str) -> str:
-    clean = category_name.split(" / ", 1)[-1].split(" > ", 1)[-1]
-    slug = quote(clean.lower().replace("&", "and").replace(",", "").replace(" ", "-"))
-    return with_listing_filters(
-        f"{site_base}/w/wholesale-{slug}.html?SortType=total_tranpro_desc"
+def wholesale_slug(name: str) -> str:
+    clean = name.split(" / ", 1)[-1].split(" > ", 1)[-1].strip()
+    return quote(
+        clean.lower().replace("&", "and").replace(",", "").replace(" ", "-"),
+        safe="-",
     )
+
+
+def wholesale_search_url(category_name: str, site_base: str) -> str:
+    slug = wholesale_slug(category_name)
+    return with_listing_filters(f"{site_base}/w/wholesale-{slug}.html")
+
+
+def calp_lv3_query_name(url: str) -> str:
+    query = dict(parse_qsl(urlsplit(url).query, keep_blank_values=True))
+    return unquote(query.get("calpLv3") or "").strip()
+
+
+def with_calp_lv3(url: str, lv3_name: str) -> str:
+    """Durable calp seed URL that records which in-page lv3 chip to click."""
+    parts = urlsplit(url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    query["calpLv3"] = lv3_name
+    return urlunsplit(
+        (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
+    )
+
+
+def product_passes_quality(product: ListingProduct) -> bool:
+    """Local quality gate (reviews/sold/rating/price). Page has no reviews SortType."""
+    if not QUALITY_FILTER:
+        return True
+    if product.price is None or product.price >= QUALITY_MAX_PRICE:
+        return False
+    if product.rating is None or product.rating < QUALITY_MIN_RATING:
+        return False
+    if product.reviews is None or product.reviews < QUALITY_MIN_REVIEWS:
+        return False
+    if product.sold_count is None or product.sold_count < QUALITY_MIN_SOLD:
+        return False
+    return True
+
+
+async def apply_orders_sort_ui(page: Page, *, worker_id: int = 0) -> bool:
+    """Click the Orders / Most orders sort control when present (calp or search)."""
+    try:
+        clicked = await page.evaluate(
+            """
+            () => {
+              const want = /^(orders|most\\s*orders|top\\s*sales)$/i;
+              const nodes = [...document.querySelectorAll(
+                'a, button, span, div, li, [role="tab"], [role="button"]'
+              )];
+              for (const el of nodes) {
+                const t = (el.innerText || el.textContent || '').trim();
+                if (!t || t.length > 24 || t.includes('\\n')) continue;
+                if (!want.test(t)) continue;
+                const clickable = el.closest('a, button, [role="tab"], [role="button"]') || el;
+                clickable.scrollIntoView({ block: 'center' });
+                clickable.click();
+                return true;
+              }
+              return false;
+            }
+            """
+        )
+        if clicked:
+            worker_log(worker_id, "已点击页面 Orders 排序")
+            await page.wait_for_timeout(1200)
+            return True
+    except Exception as exc:
+        if is_browser_dead(exc, page=page):
+            raise
+    return False
 
 
 def build_page_url(url: str, page_no: int) -> str:
@@ -2028,20 +2150,24 @@ def save_new_products(
     seen_keys: set[str],
     category_name: str,
     es_writer: ElasticsearchUrlWriter | None = None,
-) -> int:
-    """Append new URLs locally; ES upsert only when doc fingerprint changes.
+) -> tuple[int, int]:
+    """Append new URLs locally and upsert to ES (all scraped ids).
 
-    Previously every scroll round re-upserted all visible cards (same _id), which
-    flooded logs with "已写入 ES N 条" even when new_count was 0. Writer now skips
-    unchanged fingerprints; enrich/metric improvements still rewrite once.
+    Quality gate only affects the returned quality_passed count (stats on the
+    category seed); it does NOT skip ES / local file writes.
+
+    Returns (new_count, quality_passed_count_this_batch).
     """
     new_count = 0
+    quality_passed = 0
     LINKS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with FILE_IO_LOCK:
         with LINKS_FILE.open("a", encoding="utf-8") as links_fh, PRODUCTS_JSONL.open(
             "a", encoding="utf-8"
         ) as jsonl_fh:
             for product in products:
+                if product_passes_quality(product):
+                    quality_passed += 1
                 if es_writer is not None:
                     es_writer.write(product, category_name)
 
@@ -2060,11 +2186,12 @@ def save_new_products(
                     "rating": product.rating,
                     "reviews": product.reviews,
                     "sold_count": product.sold_count,
+                    "quality_passed": product_passes_quality(product),
                     "scraped_at": utc_now_iso(),
                 }
                 jsonl_fh.write(json.dumps(record, ensure_ascii=False) + "\n")
                 new_count += 1
-    return new_count
+    return new_count, quality_passed
 
 
 def worker_user_data_dir(worker_id: int) -> Path:
@@ -2088,6 +2215,7 @@ async def crawl_infinite_scroll(
     """Scroll until consecutive rounds yield no new product IDs."""
     stats = CategoryCrawlStats()
     seen_ids: set[str] = set()
+    quality_ids: set[str] = set()
     enriched_ids: set[str] = set()
     metrics_by_id: dict[str, ListingProduct] = {}
     consecutive_dup = 0
@@ -2152,7 +2280,11 @@ async def crawl_infinite_scroll(
                 p
                 for p in products
                 if p.product_id not in enriched_ids
-                and (p.rating is None or p.reviews is None)
+                and (
+                    p.rating is None
+                    or p.reviews is None
+                    or (QUALITY_FILTER and p.sold_count is None)
+                )
             ]
             if pending:
                 await enrich_rating_reviews(page, pending)
@@ -2160,8 +2292,12 @@ async def crawl_infinite_scroll(
 
         for product in products:
             metrics_by_id[product.product_id] = product
+            if product_passes_quality(product):
+                quality_ids.add(product.product_id)
 
-        new_count = save_new_products(products, seen_links, category_name, es_writer)
+        new_count, _quality_n = save_new_products(
+            products, seen_links, category_name, es_writer
+        )
         if es_writer is not None:
             es_writer.flush()
         stats.new_count += new_count
@@ -2173,11 +2309,17 @@ async def crawl_infinite_scroll(
             if collector.listing_total is not None
             else ""
         )
+        quality_hint = (
+            f"，质量门累计通过 {len(quality_ids)}"
+            if QUALITY_FILTER
+            else ""
+        )
         worker_log(
             worker_id,
             f"滚动第 {round_no} 轮：可见/API 合计 {len(products)} 个"
             f"（{with_metrics} 个含评分+评论数），"
-            f"本轮新 ID {len(fresh)} 个，保存新增 {new_count} 个{total_hint}",
+            f"本轮新 ID {len(fresh)} 个，保存新增 {new_count} 个"
+            f"{quality_hint}{total_hint}",
         )
 
         if (not current_ids or not fresh) and round_no > 1:
@@ -2197,6 +2339,7 @@ async def crawl_infinite_scroll(
         await sleep(short=True)
 
     stats.product_count = len(seen_ids)
+    stats.quality_passed = len(quality_ids)
     stats.listing_total = collector.listing_total
     return stats
 
@@ -2226,6 +2369,89 @@ async def _prepare_calp_lv3(
     return True
 
 
+def build_subcategory_seed_docs(
+    parent_name: str,
+    parent_url: str,
+    lv3_names: list[str],
+    *,
+    parent_priority: int | None = None,
+) -> list[dict]:
+    """Build ES seed docs for calp lv3 chips.
+
+    Each seed gets:
+    - a wholesale URL (SortType=total_tranpro_desc works reliably)
+    - a calp URL with calpLv3=… (for in-page chip click fallback)
+    """
+    site_base = site_base_from_url(parent_url)
+    base_priority = int(parent_priority or 100)
+    docs: list[dict] = []
+    for i, lv3 in enumerate(lv3_names):
+        if is_blacklisted_category(name=lv3):
+            continue
+        name = f"{parent_name} > {lv3}"
+        wholesale = wholesale_search_url(lv3, site_base)
+        calp = with_listing_filters(with_calp_lv3(parent_url, lv3))
+        docs.append(
+            {
+                "name": name,
+                "display_name": lv3,
+                "url": wholesale,
+                "calp_url": calp,
+                "parent_name": parent_name,
+                "parent_url": with_listing_filters(parent_url),
+                "seed_type": "calp_lv3_wholesale",
+                "enabled": True,
+                "priority": base_priority * 1000 + i + 1,
+                "site": site_host_from_url(parent_url),
+            }
+        )
+    return docs
+
+
+async def discover_calp_lv3_seed_docs(
+    page: Page,
+    category_name: str,
+    category_url: str,
+    *,
+    worker_id: int = 0,
+    parent_priority: int | None = None,
+) -> list[dict]:
+    """Open a calp L1 page, list lv3 chips, return ES seed docs."""
+    if not is_calp_url(category_url):
+        return []
+    filtered = with_listing_filters(category_url)
+    # Strip calpLv3 for discovery of the parent tab.
+    parts = urlsplit(filtered)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    query.pop("calpLv3", None)
+    filtered = urlunsplit(
+        (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
+    )
+    await safe_goto(page, filtered, worker_id=worker_id)
+    await dismiss_popups(page)
+    await handle_captcha(page, worker_id=worker_id)
+    await page.wait_for_timeout(800)
+    lv3_names = await list_calp_lv3_names(page)
+    if not lv3_names:
+        await safe_goto(page, filtered, worker_id=worker_id)
+        await dismiss_popups(page)
+        await handle_captcha(page, worker_id=worker_id)
+        await page.wait_for_timeout(800)
+        lv3_names = await list_calp_lv3_names(page)
+    if not lv3_names:
+        return []
+    worker_log(
+        worker_id,
+        f"发现 {len(lv3_names)} 个 calp 子类目 → ES seeds：{category_name}",
+    )
+    return build_subcategory_seed_docs(
+        category_name,
+        category_url,
+        lv3_names,
+        parent_priority=parent_priority,
+    )
+
+
 async def crawl_category(
     page: Page,
     category_name: str,
@@ -2234,16 +2460,20 @@ async def crawl_category(
     collector: ListingCollector,
     es_writer: ElasticsearchUrlWriter | None = None,
     worker_id: int = 0,
+    *,
+    claim_client: CategoryClaimClient | None = None,
 ) -> CategoryCrawlStats:
     stats = CategoryCrawlStats()
     category_url = with_listing_filters(category_url)
     site_base = site_base_from_url(category_url)
+    lv3_target = calp_lv3_query_name(category_url)
     worker_log(worker_id, f"类目：{category_name}")
     worker_log(worker_id, f"打开：{category_url}")
 
     def _merge(part: CategoryCrawlStats) -> None:
         stats.new_count += part.new_count
         stats.product_count += part.product_count
+        stats.quality_passed += part.quality_passed
         if part.listing_total is not None:
             if stats.listing_total is None or part.listing_total > stats.listing_total:
                 stats.listing_total = part.listing_total
@@ -2252,7 +2482,18 @@ async def crawl_category(
     await safe_goto(page, category_url, worker_id=worker_id)
     await dismiss_popups(page)
     await handle_captcha(page, worker_id=worker_id)
+    await apply_orders_sort_ui(page, worker_id=worker_id)
     await sleep()
+
+    # If this seed encodes a calp lv3 chip, click it before scrolling.
+    if is_calp_url(category_url) and lv3_target:
+        parent_for_click = category_url
+        if not await _prepare_calp_lv3(
+            page, parent_for_click, lv3_target, worker_id=worker_id
+        ):
+            worker_log(worker_id, f"未能点击 calpLv3={lv3_target}，继续滚当前页")
+        else:
+            await apply_orders_sort_ui(page, worker_id=worker_id)
 
     _merge(
         await crawl_infinite_scroll(
@@ -2267,7 +2508,14 @@ async def crawl_category(
         )
     )
 
-    if is_calp_url(category_url) and CRAWL_SUBCATEGORIES and " > " not in category_name:
+    # Calp L1: discover lv3 → upsert ES seeds (claimable separately). Optionally
+    # still inline-crawl lv3 when SUBCATEGORY_AS_SEEDS is off.
+    if (
+        is_calp_url(category_url)
+        and CRAWL_SUBCATEGORIES
+        and " > " not in category_name
+        and not lv3_target
+    ):
         try:
             await page.evaluate("window.scrollTo(0, 0)")
         except Exception:
@@ -2285,46 +2533,63 @@ async def crawl_category(
                 worker_id,
                 f"发现 {len(lv3_names)} 个 calp 子类目图标：{category_name}",
             )
-        for sub_name in lv3_names:
-            if is_blacklisted_category(name=sub_name):
-                worker_log(worker_id, f"跳过黑名单子类目：{sub_name}")
-                continue
-            target_name = f"{category_name} > {sub_name}"
-            worker_log(worker_id, f"子类目（点击）：{target_name}")
-            if CALP_RELOAD_EACH_LV3:
-                await safe_goto(page, category_url, worker_id=worker_id)
-                await dismiss_popups(page)
-                await handle_captcha(page, worker_id=worker_id)
-                await page.wait_for_timeout(500)
-                if not await click_calp_lv3(page, sub_name):
-                    worker_log(worker_id, f"未能点击子类目：{sub_name}")
-                    continue
-                if CALP_CLICK_SETTLE_MS > 0:
-                    await page.wait_for_timeout(CALP_CLICK_SETTLE_MS)
-                await ensure_seed_category_tab(page, category_url, worker_id=worker_id)
-            elif not await _prepare_calp_lv3(
-                page, category_url, sub_name, worker_id=worker_id
-            ):
-                worker_log(worker_id, f"未能点击子类目：{sub_name}")
-                continue
-            await ensure_seed_category_tab(page, category_url, worker_id=worker_id)
-            if is_blocked_category_url(page.url or ""):
-                worker_log(worker_id, f"点子类后落到禁止类目，跳过：{page.url}")
-                await safe_goto(page, category_url, worker_id=worker_id)
-                continue
-            collector.clear()
-            _merge(
-                await crawl_infinite_scroll(
-                    page,
-                    target_name,
-                    site_base,
-                    seen_links,
-                    collector,
-                    es_writer,
-                    worker_id=worker_id,
-                    listing_url=category_url,
+            if SUBCATEGORY_AS_SEEDS and claim_client is not None:
+                docs = build_subcategory_seed_docs(
+                    category_name, category_url, lv3_names
                 )
-            )
+                n = await asyncio.to_thread(claim_client.upsert_seeds, docs)
+                worker_log(
+                    worker_id,
+                    f"已写入 ES 子类目 seeds {n}/{len(docs)}：{category_name}",
+                )
+            elif not SUBCATEGORY_AS_SEEDS:
+                for sub_name in lv3_names:
+                    if is_blacklisted_category(name=sub_name):
+                        worker_log(worker_id, f"跳过黑名单子类目：{sub_name}")
+                        continue
+                    target_name = f"{category_name} > {sub_name}"
+                    worker_log(worker_id, f"子类目（点击）：{target_name}")
+                    if CALP_RELOAD_EACH_LV3:
+                        await safe_goto(page, category_url, worker_id=worker_id)
+                        await dismiss_popups(page)
+                        await handle_captcha(page, worker_id=worker_id)
+                        await page.wait_for_timeout(500)
+                        if not await click_calp_lv3(page, sub_name):
+                            worker_log(worker_id, f"未能点击子类目：{sub_name}")
+                            continue
+                        if CALP_CLICK_SETTLE_MS > 0:
+                            await page.wait_for_timeout(CALP_CLICK_SETTLE_MS)
+                        await ensure_seed_category_tab(
+                            page, category_url, worker_id=worker_id
+                        )
+                    elif not await _prepare_calp_lv3(
+                        page, category_url, sub_name, worker_id=worker_id
+                    ):
+                        worker_log(worker_id, f"未能点击子类目：{sub_name}")
+                        continue
+                    await ensure_seed_category_tab(
+                        page, category_url, worker_id=worker_id
+                    )
+                    await apply_orders_sort_ui(page, worker_id=worker_id)
+                    if is_blocked_category_url(page.url or ""):
+                        worker_log(
+                            worker_id, f"点子类后落到禁止类目，跳过：{page.url}"
+                        )
+                        await safe_goto(page, category_url, worker_id=worker_id)
+                        continue
+                    collector.clear()
+                    _merge(
+                        await crawl_infinite_scroll(
+                            page,
+                            target_name,
+                            site_base,
+                            seen_links,
+                            collector,
+                            es_writer,
+                            worker_id=worker_id,
+                            listing_url=category_url,
+                        )
+                    )
 
     elif (not is_calp_url(category_url)) and " > " not in category_name:
         wholesale = wholesale_search_url(category_name, site_base)
@@ -2333,6 +2598,7 @@ async def crawl_category(
         await safe_goto(page, wholesale, worker_id=worker_id)
         await dismiss_popups(page)
         await handle_captcha(page, worker_id=worker_id)
+        await apply_orders_sort_ui(page, worker_id=worker_id)
         _merge(
             await crawl_infinite_scroll(
                 page,
@@ -2450,7 +2716,7 @@ async def process_category_seed(
             heartbeat_task = asyncio.create_task(heartbeat_loop())
 
         # Classic /category/ seeds still auto-discover linked subcats.
-        # Calp-plus lv3 icons are clicked inside crawl_category.
+        # Calp-plus lv3 icons become ES seeds inside crawl_category when enabled.
         if (
             CRAWL_SUBCATEGORIES
             and not is_calp_url(category_url)
@@ -2470,7 +2736,30 @@ async def process_category_seed(
                             worker_id,
                             f"发现 {len(subs)} 个子类目（含多级）：{category_name}",
                         )
-                        targets.extend(subs)
+                        if SUBCATEGORY_AS_SEEDS and claim_client is not None:
+                            docs = []
+                            for i, (sub_name, sub_url) in enumerate(subs):
+                                docs.append(
+                                    {
+                                        "name": sub_name,
+                                        "url": with_listing_filters(sub_url),
+                                        "parent_name": category_name,
+                                        "parent_url": with_listing_filters(category_url),
+                                        "seed_type": "category_href",
+                                        "enabled": True,
+                                        "priority": 500000 + i,
+                                        "site": site_host_from_url(category_url),
+                                    }
+                                )
+                            n = await asyncio.to_thread(
+                                claim_client.upsert_seeds, docs
+                            )
+                            worker_log(
+                                worker_id,
+                                f"已写入 ES 子类目 seeds {n}/{len(docs)}",
+                            )
+                        else:
+                            targets.extend(subs)
                     break
                 except Exception as exc:
                     if is_browser_dead(exc, page=page) and attempt == 0:
@@ -2494,9 +2783,11 @@ async def process_category_seed(
                         collector,
                         es_writer,
                         worker_id=worker_id,
+                        claim_client=claim_client,
                     )
                     stats.new_count += part.new_count
                     stats.product_count += part.product_count
+                    stats.quality_passed += part.quality_passed
                     if part.listing_total is not None:
                         if (
                             stats.listing_total is None
@@ -2559,8 +2850,8 @@ async def crawl_worker(
     refill_lock: asyncio.Lock | None = None,
     claim_batch_size: int = 1,
     exhausted: dict | None = None,
-) -> int:
-    total_new = 0
+) -> CategoryCrawlStats:
+    totals = CategoryCrawlStats()
     # Stagger launches so windows tile cleanly and logins aren't all at once.
     if worker_id > 0:
         await asyncio.sleep(1.2 * worker_id)
@@ -2606,7 +2897,7 @@ async def crawl_worker(
         item = await next_item()
         try:
             if item is None:
-                return total_new
+                return totals
 
             claim_doc_id: str | None = None
             if isinstance(item, ClaimedCategory):
@@ -2628,7 +2919,9 @@ async def crawl_worker(
                     claim_client=claim_client,
                     claim_doc_id=claim_doc_id,
                 )
-                total_new += stats.new_count
+                totals.new_count += stats.new_count
+                totals.product_count += stats.product_count
+                totals.quality_passed += stats.quality_passed
                 if claim_client is not None and claim_doc_id:
                     await asyncio.to_thread(
                         claim_client.complete,
@@ -2636,16 +2929,25 @@ async def crawl_worker(
                         product_count=stats.product_count,
                         new_count=stats.new_count,
                         listing_total=stats.listing_total,
+                        quality_passed=stats.quality_passed,
+                        crawl_round=CURRENT_CRAWL_ROUND or None,
+                        crawl_url=with_listing_filters(category_url),
                     )
                 total_hint = (
                     f"，页面宣称 {stats.listing_total}"
                     if stats.listing_total is not None
                     else ""
                 )
+                quality_hint = (
+                    f"，质量通过 {stats.quality_passed}"
+                    if QUALITY_FILTER
+                    else ""
+                )
                 worker_log(
                     worker_id,
                     f"完成类目：{category_name}（本类目 ID {stats.product_count}，"
-                    f"新增 {stats.new_count}{total_hint}；累计新增 {total_new}）",
+                    f"新增 {stats.new_count}{quality_hint}{total_hint}；"
+                    f"累计新增 {totals.new_count}）",
                 )
             except Exception as exc:
                 worker_log(worker_id, f"类目失败：{category_name}: {exc}")
@@ -2660,7 +2962,142 @@ async def crawl_worker(
                 category_queue.task_done()
 
 
+async def run_one_crawl_pass(
+    playwright,
+    *,
+    claim_client: CategoryClaimClient | None,
+    categories: list[tuple[str, str]],
+    seen_links: set[str],
+    es_writer: ElasticsearchUrlWriter,
+    workers: int,
+    batch_size: int,
+) -> CategoryCrawlStats:
+    """Run workers until local queue / ES claims are exhausted."""
+    category_queue: asyncio.Queue = asyncio.Queue()
+    refill_lock = asyncio.Lock()
+    exhausted = {"done": False}
+    claim_mode = claim_client is not None
+
+    if claim_mode:
+        assert claim_client is not None
+        first = await asyncio.to_thread(claim_client.claim_batch, batch_size)
+        if not first:
+            print("ES 无可认领类目（均已 claimed/done，或未 enabled）。")
+            return CategoryCrawlStats()
+        print(
+            f"[claim] device={claim_client.device_id} 首批认领 {len(first)} 个："
+            + ", ".join(c.name for c in first)
+        )
+        for cat in first:
+            await category_queue.put(cat)
+    else:
+        for item in categories:
+            await category_queue.put(item)
+        for _ in range(workers):
+            await category_queue.put(None)
+
+    results = await asyncio.gather(
+        *[
+            crawl_worker(
+                playwright,
+                worker_id,
+                category_queue,
+                seen_links,
+                es_writer,
+                workers=workers,
+                claim_client=claim_client if claim_mode else None,
+                refill_lock=refill_lock if claim_mode else None,
+                claim_batch_size=batch_size,
+                exhausted=exhausted if claim_mode else None,
+            )
+            for worker_id in range(workers)
+        ]
+    )
+    totals = CategoryCrawlStats()
+    for part in results:
+        totals.new_count += part.new_count
+        totals.product_count += part.product_count
+        totals.quality_passed += part.quality_passed
+    return totals
+
+
+async def bootstrap_subcategory_seeds(
+    playwright,
+    claim_client: CategoryClaimClient,
+    *,
+    workers: int = 1,
+) -> int:
+    """Open each L1 calp seed once and upsert lv3 wholesale URLs into ES."""
+    if not SUBCATEGORY_AS_SEEDS or not CRAWL_SUBCATEGORIES:
+        return 0
+    seeds: list[dict] = []
+    try:
+        assert claim_client.client is not None
+        resp = claim_client.client.search(
+            index=claim_client.index,
+            size=200,
+            query={
+                "bool": {
+                    "must": [{"term": {"enabled": True}}],
+                    "must_not": [
+                        {"ids": {"values": ["__crawl_round__"]}},
+                        {"wildcard": {"name": "* > *"}},
+                    ],
+                }
+            },
+            sort=[{"priority": {"order": "asc", "unmapped_type": "long"}}],
+            _source=["name", "url", "priority"],
+        )
+        for hit in resp.get("hits", {}).get("hits", []):
+            src = hit.get("_source") or {}
+            name = str(src.get("name") or "").strip()
+            url = str(src.get("url") or "").strip()
+            if name and url and is_calp_url(url) and " > " not in name:
+                seeds.append(
+                    {
+                        "name": name,
+                        "url": url,
+                        "priority": src.get("priority"),
+                    }
+                )
+    except Exception as exc:
+        print(f"bootstrap 读取 L1 seeds 失败: {exc}")
+        return 0
+
+    if not seeds:
+        print("bootstrap: 无 L1 calp seeds，跳过子类目发现。")
+        return 0
+
+    context, page, _collector = await create_browser(playwright, 0, workers=workers)
+    total = 0
+    try:
+        for seed in seeds:
+            try:
+                docs = await discover_calp_lv3_seed_docs(
+                    page,
+                    seed["name"],
+                    seed["url"],
+                    worker_id=0,
+                    parent_priority=int(seed.get("priority") or 100),
+                )
+                if docs:
+                    n = await asyncio.to_thread(claim_client.upsert_seeds, docs)
+                    total += n
+                    print(f"bootstrap {seed['name']}: upsert {n}/{len(docs)} 子类目")
+            except Exception as exc:
+                print(f"bootstrap 失败 {seed['name']}: {exc}")
+                if is_browser_dead(exc, page=page):
+                    await close_browser(context)
+                    context, page, _collector = await create_browser(
+                        playwright, 0, workers=workers
+                    )
+    finally:
+        await close_browser(context)
+    return total
+
+
 async def main_async() -> None:
+    global CURRENT_CRAWL_ROUND
     claim_client = build_claim_client()
     claim_mode = claim_client is not None
     device = default_device_id(DEVICE_ID)
@@ -2694,6 +3131,8 @@ async def main_async() -> None:
         )
         print(f"类目索引: {claim_client.index}")
         print(f"重抓已完成: {'是' if CRAWL_RECLAIM_DONE else '否'}")
+        print(f"循环抓取: {'是' if CRAWL_LOOP else '否'}（间隔 {CRAWL_LOOP_SLEEP_SEC}s）")
+        print(f"子类目入库: {'是' if SUBCATEGORY_AS_SEEDS else '否'}")
     else:
         print(f"多设备认领: 关闭（本地队列，共 {len(categories)} 个类目）")
         print(f"类目数量: {len(categories)}（US）")
@@ -2717,7 +3156,16 @@ async def main_async() -> None:
         filter_bits.append(f"maxPrice={LISTING_MAX_PRICE}")
     if LISTING_STAR_FILTER:
         filter_bits.append(f"selectedSwitches=filterCode:{LISTING_STAR_FILTER}")
+    if LISTING_SORT_TYPE:
+        filter_bits.append(f"SortType={LISTING_SORT_TYPE}")
     print(f"列表过滤: {', '.join(filter_bits) if filter_bits else '关闭'}")
+    if QUALITY_FILTER:
+        print(
+            f"本地质量门: price<{QUALITY_MAX_PRICE} rating≥{QUALITY_MIN_RATING} "
+            f"reviews≥{QUALITY_MIN_REVIEWS} sold≥{QUALITY_MIN_SOLD}"
+        )
+    else:
+        print("本地质量门: 关闭")
     print(
         f"类目黑名单: {len(BLOCKED_CATEGORY_TABS)} tabs / "
         f"{len(CATEGORY_BLACKLIST_KEYWORDS)} keywords <- {CATEGORY_BLACKLIST_FILE.name}"
@@ -2726,56 +3174,79 @@ async def main_async() -> None:
 
     seen_links = load_seen_links()
     es_writer = ElasticsearchUrlWriter()
-    category_queue: asyncio.Queue = asyncio.Queue()
-    refill_lock = asyncio.Lock()
-    exhausted = {"done": False}
-
-    if claim_mode:
-        assert claim_client is not None
-        first = await asyncio.to_thread(claim_client.claim_batch, batch_size)
-        if not first:
-            print("ES 无可认领类目（均已 claimed/done，或未 enabled）。退出。")
-            es_writer.close()
-            return
-        print(
-            f"[claim] device={device} 首批认领 {len(first)} 个："
-            + ", ".join(c.name for c in first)
-        )
-        for cat in first:
-            await category_queue.put(cat)
-    else:
-        for item in categories:
-            await category_queue.put(item)
-        for _ in range(workers):
-            await category_queue.put(None)
 
     async with async_playwright() as playwright:
-        results = await asyncio.gather(
-            *[
-                crawl_worker(
-                    playwright,
-                    worker_id,
-                    category_queue,
-                    seen_links,
-                    es_writer,
-                    workers=workers,
-                    claim_client=claim_client if claim_mode else None,
-                    refill_lock=refill_lock if claim_mode else None,
-                    claim_batch_size=batch_size,
-                    exhausted=exhausted if claim_mode else None,
+        round_no = 0
+        while True:
+            round_no += 1
+            CURRENT_CRAWL_ROUND = round_no
+            if claim_mode and claim_client is not None:
+                meta = claim_client.get_round_meta()
+                prev = int(meta.get("round") or 0)
+                if prev >= round_no:
+                    round_no = prev + 1
+                    CURRENT_CRAWL_ROUND = round_no
+                print(f"\n======== 抓取轮次 #{round_no} 开始 ========")
+                # Ensure done/claimed from prior runs can be worked when looping.
+                if CRAWL_LOOP or CRAWL_RECLAIM_DONE:
+                    # First round: also reclaim stale done so continuous works
+                    # even if CRAWL_RECLAIM_DONE=0 but CRAWL_LOOP=1.
+                    if round_no > 1 or CRAWL_LOOP:
+                        reset_n = await asyncio.to_thread(
+                            claim_client.reset_all_pending, crawl_round=round_no
+                        )
+                        print(f"已重置 {reset_n} 个类目为 pending（round={round_no}）")
+                boot_n = await bootstrap_subcategory_seeds(
+                    playwright, claim_client, workers=workers
                 )
-                for worker_id in range(workers)
-            ]
-        )
+                if boot_n:
+                    print(f"子类目 bootstrap 完成：{boot_n} 条写入 ES")
+
+            totals = await run_one_crawl_pass(
+                playwright,
+                claim_client=claim_client if claim_mode else None,
+                categories=categories,
+                seen_links=seen_links,
+                es_writer=es_writer,
+                workers=workers,
+                batch_size=batch_size,
+            )
+            es_writer.flush()
+
+            completed_at = utc_now_iso()
+            seed_count = 0
+            if claim_mode and claim_client is not None:
+                seed_count = await asyncio.to_thread(claim_client.count_enabled_seeds)
+                await asyncio.to_thread(
+                    claim_client.record_round_complete,
+                    round_no=round_no,
+                    seed_count=seed_count,
+                    product_count=totals.product_count,
+                    new_count=totals.new_count,
+                    quality_passed=totals.quality_passed,
+                )
+
+            print(f"\n—— 轮次 #{round_no} 完成 @ {completed_at} ——")
+            print(f"本轮可见/抓取 ID: {totals.product_count}")
+            print(f"本轮新增: {totals.new_count}")
+            if QUALITY_FILTER:
+                print(f"本轮质量门通过(累计写入轮次): {totals.quality_passed}")
+            if claim_mode:
+                print(f"ES 启用 seeds: {seed_count}")
+                print(f"轮次完成时间已写入 ES doc `__crawl_round__`")
+
+            if not CRAWL_LOOP or not claim_mode:
+                break
+            print(f"循环抓取：休眠 {CRAWL_LOOP_SLEEP_SEC}s 后开始下一轮 …")
+            await asyncio.sleep(CRAWL_LOOP_SLEEP_SEC)
+
     es_writer.close()
-    total_new = sum(results)
 
     print("\n完成。")
     print(f"并行 worker: {workers}")
     if claim_mode:
         print(f"设备 ID: {device}")
     print(f"累计商品数: {len(seen_links)}")
-    print(f"本次新增: {total_new}")
     print(f"链接文件: {LINKS_FILE}")
     print(f"列表文件: {PRODUCTS_JSONL}")
     if es_writer.enabled:

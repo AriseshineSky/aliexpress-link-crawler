@@ -51,6 +51,7 @@ class CategoryConfigTests(unittest.TestCase):
         filtered = with_listing_filters(url)
         self.assertIn("maxPrice=99", filtered)
         self.assertIn("selectedSwitches=filterCode%3A4StarRating", filtered)
+        self.assertIn("SortType=total_tranpro_desc", filtered)
         self.assertIn("postCatIds=200000287", filtered)
 
     def test_wholesale_search_url_includes_filters(self) -> None:
@@ -58,6 +59,84 @@ class CategoryConfigTests(unittest.TestCase):
         self.assertIn("SortType=total_tranpro_desc", url)
         self.assertIn("maxPrice=99", url)
         self.assertIn("selectedSwitches=filterCode%3A4StarRating", url)
+
+    def test_calp_url_gets_sort_type(self) -> None:
+        url = with_listing_filters(
+            "https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=automotive"
+        )
+        self.assertIn("SortType=total_tranpro_desc", url)
+        self.assertIn("categoryTab=automotive", url)
+
+    def test_product_passes_quality(self) -> None:
+        from alilj import ListingProduct, product_passes_quality
+
+        good = ListingProduct(
+            product_id="1",
+            url="https://www.aliexpress.us/item/1.html",
+            source="aliexpress.us",
+            price=50.0,
+            rating=4.5,
+            reviews=400,
+            sold_count=600,
+        )
+        self.assertTrue(product_passes_quality(good))
+        bad = ListingProduct(
+            product_id="2",
+            url="https://www.aliexpress.us/item/2.html",
+            source="aliexpress.us",
+            price=50.0,
+            rating=4.5,
+            reviews=10,
+            sold_count=600,
+        )
+        self.assertFalse(product_passes_quality(bad))
+
+    def test_save_writes_even_when_quality_fails(self) -> None:
+        from alilj import ListingProduct, save_new_products
+        from pathlib import Path
+        import tempfile
+
+        bad = ListingProduct(
+            product_id="99",
+            url="https://www.aliexpress.us/item/99.html",
+            source="aliexpress.us",
+            price=50.0,
+            rating=4.5,
+            reviews=1,
+            sold_count=1,
+        )
+        seen: set[str] = set()
+        old_links = alilj.LINKS_FILE
+        old_jsonl = alilj.PRODUCTS_JSONL
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                alilj.LINKS_FILE = Path(tmp) / "links.txt"
+                alilj.PRODUCTS_JSONL = Path(tmp) / "products.jsonl"
+                new_count, quality_n = save_new_products([bad], seen, "US / Test")
+                self.assertEqual(new_count, 1)
+                self.assertEqual(quality_n, 0)
+                self.assertTrue(alilj.LINKS_FILE.exists())
+                self.assertIn("99", alilj.LINKS_FILE.read_text(encoding="utf-8"))
+        finally:
+            alilj.LINKS_FILE = old_links
+            alilj.PRODUCTS_JSONL = old_jsonl
+
+    def test_build_subcategory_seed_docs(self) -> None:
+        from alilj import build_subcategory_seed_docs
+
+        docs = build_subcategory_seed_docs(
+            "US / Beauty & Health",
+            "https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=beauty_%26_health",
+            ["Face Makeup", "Nail Art"],
+            parent_priority=3,
+        )
+        self.assertEqual(len(docs), 2)
+        self.assertEqual(docs[0]["name"], "US / Beauty & Health > Face Makeup")
+        self.assertIn("/w/wholesale-", docs[0]["url"])
+        self.assertIn("SortType=total_tranpro_desc", docs[0]["url"])
+        self.assertIn("calpLv3=", docs[0]["calp_url"])
+        self.assertEqual(docs[0]["parent_name"], "US / Beauty & Health")
+        self.assertEqual(docs[0]["priority"], 3001)
 
     def test_worker_user_data_dir(self) -> None:
         old = alilj.CRAWL_WORKERS

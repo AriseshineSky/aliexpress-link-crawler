@@ -84,6 +84,9 @@ class CategoryClaimUnitTests(unittest.TestCase):
             product_count=120,
             new_count=40,
             listing_total=5000,
+            quality_passed=33,
+            crawl_round=2,
+            crawl_url="https://example/x",
         )
         body = es.update.call_args[1]["body"]
         doc = body["doc"]
@@ -91,12 +94,59 @@ class CategoryClaimUnitTests(unittest.TestCase):
         self.assertEqual(doc["crawled_product_count"], 120)
         self.assertEqual(doc["crawled_new_count"], 40)
         self.assertEqual(doc["listing_total"], 5000)
+        self.assertEqual(doc["crawled_quality_passed"], 33)
+        self.assertEqual(doc["last_crawl_round"], 2)
 
     def test_stats_defaults(self) -> None:
         stats = CategoryCrawlStats()
         self.assertEqual(stats.new_count, 0)
         self.assertEqual(stats.product_count, 0)
+        self.assertEqual(stats.quality_passed, 0)
         self.assertIsNone(stats.listing_total)
+
+    def test_upsert_seeds(self) -> None:
+        client = CategoryClaimClient(
+            "http://user:pass@localhost:9200",
+            "cats",
+            device_id="pc-a",
+        )
+        es = MagicMock()
+        client.client = es
+        client.enabled = True
+        n = client.upsert_seeds(
+            [
+                {
+                    "name": "US / Beauty > Lip",
+                    "url": "https://www.aliexpress.us/w/wholesale-lip.html",
+                    "enabled": True,
+                }
+            ]
+        )
+        self.assertEqual(n, 1)
+        self.assertTrue(es.update.called)
+
+    def test_record_round_complete(self) -> None:
+        client = CategoryClaimClient(
+            "http://user:pass@localhost:9200",
+            "cats",
+            device_id="pc-a",
+        )
+        es = MagicMock()
+        client.client = es
+        client.enabled = True
+        client.record_round_complete(
+            round_no=3,
+            seed_count=50,
+            product_count=1000,
+            new_count=20,
+            quality_passed=15,
+        )
+        args = es.update.call_args
+        self.assertEqual(args.kwargs.get("id") or args[1].get("id"), "__crawl_round__")
+        body = args.kwargs.get("body") or args[1]["body"]
+        doc = body["doc"]
+        self.assertEqual(doc["round"], 3)
+        self.assertIn("last_round_completed_at", doc)
 
 
 class ListingTotalExtractTests(unittest.TestCase):

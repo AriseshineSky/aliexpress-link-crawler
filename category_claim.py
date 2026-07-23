@@ -44,6 +44,10 @@ class CategoryCrawlStats:
     new_count: int = 0
     product_count: int = 0
     listing_total: int | None = None
+    quality_passed: int = 0
+
+
+ROUND_META_ID = "__crawl_round__"
 
 
 CLAIM_SCRIPT = """
@@ -107,7 +111,9 @@ class CategoryClaimClient:
         return (base + timedelta(seconds=self.lease_seconds)).isoformat()
 
     def _eligible_query(self) -> dict[str, Any]:
-        must: list[dict[str, Any]] = []
+        must: list[dict[str, Any]] = [
+            {"bool": {"must_not": [{"ids": {"values": [ROUND_META_ID]}}]}},
+        ]
         if self.enabled_only:
             must.append({"term": {"enabled": True}})
 
@@ -274,6 +280,9 @@ class CategoryClaimClient:
         product_count: int,
         new_count: int,
         listing_total: int | None = None,
+        quality_passed: int | None = None,
+        crawl_round: int | None = None,
+        crawl_url: str | None = None,
     ) -> None:
         if not self.enabled or self.client is None:
             return
@@ -290,6 +299,12 @@ class CategoryClaimClient:
         }
         if listing_total is not None:
             fields["listing_total"] = int(listing_total)
+        if quality_passed is not None:
+            fields["crawled_quality_passed"] = int(quality_passed)
+        if crawl_round is not None:
+            fields["last_crawl_round"] = int(crawl_round)
+        if crawl_url:
+            fields["last_crawl_url"] = str(crawl_url)
         try:
             self.client.update(index=self.index, id=doc_id, body={"doc": fields})
         except NotFoundError:
@@ -316,3 +331,141 @@ class CategoryClaimClient:
             )
         except NotFoundError:
             return
+
+    def upsert_seeds(self, docs: list[dict[str, Any]], *, id_field: str = "name") -> int:
+        """Partial-update category/subcategory seeds; preserve crawl progress.
+
+        New docs get crawl_status=pending. Existing docs keep claim/crawl fields.
+        """
+        if not self.enabled or self.client is None or not docs:
+            return 0
+        ok = 0
+        now_iso = utc_now_iso()
+        for doc in docs:
+            doc_id = str(doc.get(id_field) or "").strip()
+            if not doc_id:
+                continue
+            seed = {k: v for k, v in doc.items() if v is not None}
+            seed["updated_at"] = now_iso
+            upsert = dict(seed)
+            upsert.setdefault("crawl_status", "pending")
+            upsert.setdefault("enabled", True)
+            try:
+                self.client.update(
+                    index=self.index,
+                    id=doc_id,
+                    body={"doc": seed, "upsert": upsert},
+                    refresh=False,
+                )
+                ok += 1
+            except Exception:
+                continue
+        try:
+            self.client.indices.refresh(index=self.index)
+        except Exception:
+            pass
+        return ok
+
+    def count_enabled_seeds(self) -> int:
+        if not self.enabled or self.client is None:
+            return 0
+        must: list[dict[str, Any]] = [{"term": {"enabled": True}}]
+        must.append({"bool": {"must_not": [{"ids": {"values": [ROUND_META_ID]}}]}})
+        try:
+            return int(
+                self.client.count(index=self.index, query={"bool": {"must": must}})[
+                    "count"
+                ]
+            )
+        except Exception:
+            return 0
+
+    def get_round_meta(self) -> dict[str, Any]:
+        if not self.enabled or self.client is None:
+            return {"round": 0}
+        try:
+            got = self.client.get(index=self.index, id=ROUND_META_ID)
+            src = got.get("_source") or {}
+            return src if isinstance(src, dict) else {"round": 0}
+        except NotFoundError:
+            return {"round": 0}
+        except Exception:
+            return {"round": 0}
+
+    def record_round_complete(
+        self,
+        *,
+        round_no: int,
+        seed_count: int,
+        product_count: int,
+        new_count: int,
+        quality_passed: int = 0,
+    ) -> None:
+        """Persist round completion timestamp + totals (special meta doc)."""
+        if not self.enabled or self.client is None:
+            return
+        now_iso = utc_now_iso()
+        doc = {
+            "name": ROUND_META_ID,
+            "enabled": False,
+            "round": int(round_no),
+            "last_round_completed_at": now_iso,
+            "last_round_seed_count": int(seed_count),
+            "last_round_product_count": int(product_count),
+            "last_round_new_count": int(new_count),
+            "last_round_quality_passed": int(quality_passed),
+            "updated_at": now_iso,
+            "crawl_status": "meta",
+        }
+        try:
+            self.client.update(
+                index=self.index,
+                id=ROUND_META_ID,
+                body={"doc": doc, "upsert": doc},
+                refresh=True,
+            )
+        except Exception:
+            return
+
+    def reset_all_pending(self, *, crawl_round: int | None = None) -> int:
+        """Reset enabled seeds to pending for the next continuous crawl round."""
+        if not self.enabled or self.client is None:
+            return 0
+        now_iso = utc_now_iso()
+        script = """
+        if (ctx._source.name != null && params.name_skip.equals(ctx._source.name)) {
+          ctx.op = 'noop';
+        } else {
+          ctx._source.crawl_status = 'pending';
+          ctx._source.remove('claimed_by');
+          ctx._source.remove('claimed_at');
+          ctx._source.remove('claim_expires_at');
+          ctx._source.remove('last_error');
+          ctx._source.updated_at = params.now;
+          if (params.round != null) {
+            ctx._source.next_crawl_round = params.round;
+          }
+        }
+        """
+        query: dict[str, Any] = {"term": {"enabled": True}}
+        try:
+            resp = self.client.update_by_query(
+                index=self.index,
+                body={
+                    "query": query,
+                    "script": {
+                        "source": script,
+                        "lang": "painless",
+                        "params": {
+                            "now": now_iso,
+                            "round": crawl_round,
+                            "name_skip": ROUND_META_ID,
+                        },
+                    },
+                },
+                conflicts="proceed",
+                refresh=True,
+            )
+            return int(resp.get("updated") or 0)
+        except Exception:
+            return 0
