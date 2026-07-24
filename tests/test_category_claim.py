@@ -97,6 +97,49 @@ class CategoryClaimUnitTests(unittest.TestCase):
         self.assertEqual(doc["crawled_quality_passed"], 33)
         self.assertEqual(doc["last_crawl_round"], 2)
 
+    def test_list_candidates_uses_random_score(self) -> None:
+        client = CategoryClaimClient(
+            "http://user:pass@localhost:9200",
+            "cats",
+            device_id="pc-a",
+            reclaim_done=True,
+        )
+        es = MagicMock()
+        client.client = es
+        client.enabled = True
+        es.search.return_value = {
+            "hits": {
+                "hits": [
+                    {
+                        "_id": "US / A",
+                        "_source": {
+                            "name": "US / A",
+                            "url": "https://example/a",
+                            "crawl_status": "pending",
+                        },
+                    },
+                    {
+                        "_id": "US / B",
+                        "_source": {
+                            "name": "US / B",
+                            "url": "https://example/b",
+                            "crawl_status": "done",
+                        },
+                    },
+                ]
+            }
+        }
+        rows = client.list_candidates(size=10)
+        self.assertEqual(len(rows), 2)
+        call_kwargs = es.search.call_args.kwargs or es.search.call_args[1]
+        query = call_kwargs["query"]
+        self.assertIn("function_score", query)
+        self.assertIn("random_score", query["function_score"])
+
+    def test_claim_script_reclaims_done(self) -> None:
+        self.assertIn("reclaim_done", CLAIM_SCRIPT)
+        self.assertIn("status == 'done'", CLAIM_SCRIPT)
+
     def test_stats_defaults(self) -> None:
         stats = CategoryCrawlStats()
         self.assertEqual(stats.new_count, 0)

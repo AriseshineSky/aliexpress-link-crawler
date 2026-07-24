@@ -3,13 +3,16 @@
 AliExpress 商品链接抓取（alilj.py）。
 
 只抓列表页，不抓详情；从列表页 API + DOM 提取价格、评分、评论数、销量。
-首页分类入口为 /p/calp-plus/?categoryTab=...，商品靠无限下滑加载（非 ?page=N）。
+首页分类入口为 /p/calp-plus/?categoryTab=...，商品靠无限下滑加载。
+批发 /w/wholesale-* 与 /category/* 多为翻页；运行时按页面 DOM 自动选择下滑或翻页。
 默认附加 maxPrice / 4StarRating / SortType=total_tranpro_desc（销量优先）。
 页面无 reviews 数量排序；本地 QUALITY_* 仅统计质量通过数，抓到的 id 一律写入 ES/本地。
 calp 子类目：发现后写入 ES 为批发搜索 URL（可认领），并循环抓取各 URL。
+类目 URL 预发现：discover_categories.py / --discover-categories（先爬 L1+lv3，再抓商品）。
 默认只抓 aliexpress.us；支持滑块验证码自动拖动 + 手动兜底。
 多 worker 并行：分类入队，CRAWL_WORKERS 个独立浏览器各自领取类目。
 多设备：ES 类目索引认领（claimed + lease），抓完标记 done 并写产品数。
+默认 CRAWL_RECLAIM_DONE=1：已 done 的 URL 仍可再认领，循环抓取；每次随机选可抓 seed。
 CRAWL_LOOP=1 时整轮结束后重置 pending 并重复；轮次时间写入 __crawl_round__。
 输出：产品链接.txt、产品列表.jsonl、Elasticsearch（ELASTICSEARCH_INDEX_URLS）
 """
@@ -53,9 +56,10 @@ HEADLESS = False
 CAPTCHA_WAIT_SECONDS = 120
 CRAWL_SUBCATEGORIES = True
 MAX_SUBCATEGORY_DEPTH = 5
-MAX_PAGES_PER_CATEGORY = 0  # 兼容旧环境变量；>0 时作为最大滚动轮数
-MAX_SCROLL_ROUNDS = 0  # 0 = 不限制，直到连续无新商品
+MAX_PAGES_PER_CATEGORY = 0  # 翻页模式：0=不限制；>0 为最大页数
+MAX_SCROLL_ROUNDS = 0  # 下滑模式：0=不限制，直到连续无新商品
 CONSECUTIVE_DUPLICATE_SCROLLS_TO_STOP = 10
+CONSECUTIVE_DUPLICATE_PAGES_TO_STOP = 3  # 翻页：连续 N 页无新 ID 则停
 REQUEST_DELAY_MS = (600, 1200)  # 原 2000–4000，默认提速
 GOTO_SETTLE_MS = 800  # safe_goto 后固定等待，原 2500
 SCROLL_API_TIMEOUT_MS = 3500  # 滚动后等列表 API
@@ -77,7 +81,7 @@ CLAIM_BATCH_SIZE = 0  # 0 = CRAWL_WORKERS（每批给本机所有 worker）
 CLAIM_LEASE_SECONDS = 7200  # 占用租约；超时可被其他设备回收
 CLAIM_HEARTBEAT_SECONDS = 900  # 抓取中续租间隔
 DEVICE_ID = ""  # 空 = hostname；多机请设不同值
-CRAWL_RECLAIM_DONE = False  # True = 重新抓已 done 的类目
+CRAWL_RECLAIM_DONE = True  # True = 已 done 仍可再认领（循环抓）；False = 抓过就跳过
 # 打开分类/列表页时附加的 URL 过滤（与站内 selectedSwitches / minPrice / maxPrice 一致）
 LISTING_MAX_PRICE = "99"  # 空字符串 = 不加价格上限
 LISTING_MIN_PRICE = ""  # 空字符串 = 不加价格下限
@@ -246,8 +250,6 @@ def _load_category_blacklist() -> None:
 _load_category_blacklist()
 if max_pages := (os.getenv("MAX_PAGES_PER_CATEGORY") or "").strip():
     MAX_PAGES_PER_CATEGORY = int(max_pages)
-    if MAX_PAGES_PER_CATEGORY > 0 and not (os.getenv("MAX_SCROLL_ROUNDS") or "").strip():
-        MAX_SCROLL_ROUNDS = MAX_PAGES_PER_CATEGORY
 if max_scrolls := (os.getenv("MAX_SCROLL_ROUNDS") or "").strip():
     MAX_SCROLL_ROUNDS = int(max_scrolls)
 if (os.getenv("CRAWL_SUBCATEGORIES") or "").strip().lower() in {"0", "false", "no"}:
@@ -259,6 +261,8 @@ if delay_ms := (os.getenv("REQUEST_DELAY_MS") or "").strip():
     REQUEST_DELAY_MS = (int(low), int(high))
 if dup_stop := (os.getenv("CONSECUTIVE_DUPLICATE_SCROLLS_TO_STOP") or "").strip():
     CONSECUTIVE_DUPLICATE_SCROLLS_TO_STOP = int(dup_stop)
+if dup_pages := (os.getenv("CONSECUTIVE_DUPLICATE_PAGES_TO_STOP") or "").strip():
+    CONSECUTIVE_DUPLICATE_PAGES_TO_STOP = max(1, int(dup_pages))
 if goto_settle := (os.getenv("GOTO_SETTLE_MS") or "").strip():
     GOTO_SETTLE_MS = int(goto_settle)
 if scroll_api := (os.getenv("SCROLL_API_TIMEOUT_MS") or "").strip():
@@ -324,6 +328,8 @@ if claim_hb := (os.getenv("CLAIM_HEARTBEAT_SECONDS") or "").strip():
     CLAIM_HEARTBEAT_SECONDS = max(30, int(claim_hb))
 if device_id_env := (os.getenv("DEVICE_ID") or "").strip():
     DEVICE_ID = device_id_env
+if (os.getenv("CRAWL_RECLAIM_DONE") or "").strip().lower() in {"0", "false", "no"}:
+    CRAWL_RECLAIM_DONE = False
 if (os.getenv("CRAWL_RECLAIM_DONE") or "").strip().lower() in {"1", "true", "yes"}:
     CRAWL_RECLAIM_DONE = True
 
@@ -1207,6 +1213,40 @@ def wholesale_search_url(category_name: str, site_base: str) -> str:
     return with_listing_filters(f"{site_base}/w/wholesale-{slug}.html")
 
 
+def build_page_url(url: str, page_no: int) -> str:
+    """Attach ?page=N for wholesale / classic category pagination."""
+    if page_no <= 1:
+        return url
+    parts = urlsplit(url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    query["page"] = str(page_no)
+    match = re.search(r"/category/(\d+)/", parts.path)
+    if match and "CatId" not in query:
+        query["CatId"] = match.group(1)
+    return urlunsplit(
+        (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
+    )
+
+
+def infer_listing_load_mode(
+    *,
+    has_pagination_dom: bool,
+    url: str = "",
+) -> str:
+    """Decide scroll vs pagination from DOM signal + URL shape.
+
+    Returns \"pagination\" or \"scroll\".
+    """
+    if has_pagination_dom:
+        return "pagination"
+    text = (url or "").lower()
+    if "/p/calp-plus/" in text or "categorytab=" in text:
+        return "scroll"
+    if "/w/wholesale-" in text or re.search(r"/category/\d+/", text):
+        return "pagination"
+    return "scroll"
+
+
 def calp_lv3_query_name(url: str) -> str:
     query = dict(parse_qsl(urlsplit(url).query, keep_blank_values=True))
     return unquote(query.get("calpLv3") or "").strip()
@@ -1957,6 +1997,175 @@ def category_id_from_url(category_url: str) -> str:
     return match.group(1) if match else ""
 
 
+def category_tab_display_name(tab: str) -> str:
+    """Decode categoryTab token to a human label, e.g. toys_%26_games -> Toys & Games."""
+    raw = unquote((tab or "").strip())
+    if not raw:
+        return ""
+    text = raw.replace("_", " ").replace("%26", "&").replace("%2C", ",")
+    text = re.sub(r"\s+", " ", text).strip()
+    # Keep short connectors lowercase when title-casing.
+    parts: list[str] = []
+    for token in text.split(" "):
+        low = token.lower()
+        if low in {"&", "and", "or", "of", "the"} and parts:
+            parts.append(low if low != "&" else "&")
+        elif low == "&":
+            parts.append("&")
+        else:
+            parts.append(token[:1].upper() + token[1:] if token else token)
+    return " ".join(parts)
+
+
+def build_calp_l1_url(site_base: str, category_tab: str) -> str:
+    tab = unquote((category_tab or "").strip())
+    base = (site_base or "https://www.aliexpress.us").rstrip("/")
+    return f"{base}/p/calp-plus/index.html?categoryTab={quote(tab, safe='')}"
+
+
+def build_l1_seed_docs(
+    tabs: list[dict[str, str]],
+    *,
+    site_prefix: str = "US",
+    site_base: str | None = None,
+) -> list[dict]:
+    """Build ES seed docs for discovered L1 calp categoryTab entries."""
+    docs: list[dict] = []
+    forced_base = (site_base or "").rstrip("/") or None
+    for i, row in enumerate(tabs):
+        tab = str(row.get("tab") or "").strip()
+        url = str(row.get("url") or "").strip()
+        label = str(row.get("name") or "").strip() or category_tab_display_name(tab)
+        if not tab or not url:
+            continue
+        if forced_base:
+            url = build_calp_l1_url(forced_base, tab)
+        if is_blacklisted_category(name=label, url=url):
+            continue
+        host = site_host_from_url(url)
+        if forced_base:
+            prefix = "COM" if forced_base.endswith(".com") else "US"
+        else:
+            prefix = site_prefix
+            if host.endswith(".com"):
+                prefix = "COM"
+            elif host.endswith(".us"):
+                prefix = "US"
+        name = f"{prefix} / {label}"
+        docs.append(
+            {
+                "name": name,
+                "display_name": label,
+                "category_tab": tab.lower(),
+                "url": with_listing_filters(url),
+                "enabled": True,
+                "priority": i + 1,
+                "site": host,
+                "seed_type": "calp_l1",
+            }
+        )
+    return docs
+
+
+async def list_calp_l1_tabs(
+    page: Page, *, site_base: str | None = None
+) -> list[dict[str, str]]:
+    """Collect top-nav / sidebar L1 links that carry categoryTab=…."""
+    rows = await page.evaluate(
+        """
+        () => {
+          const out = [];
+          const seen = new Set();
+          const anchors = document.querySelectorAll('a[href*="categoryTab="]');
+          for (const a of anchors) {
+            const href = a.href || '';
+            let tab = '';
+            try {
+              tab = new URL(href).searchParams.get('categoryTab') || '';
+            } catch (e) {
+              const m = href.match(/categoryTab=([^&]+)/);
+              tab = m ? decodeURIComponent(m[1]) : '';
+            }
+            tab = (tab || '').trim();
+            if (!tab) continue;
+            const key = tab.toLowerCase();
+            if (seen.has(key)) continue;
+            seen.add(key);
+            let name = (a.innerText || a.getAttribute('aria-label') || a.title || '')
+              .trim().replace(/\\s+/g, ' ');
+            if (!name || name.length > 80) {
+              name = tab.replace(/_/g, ' ');
+            }
+            out.push({ name, tab, url: href.split('#')[0] });
+          }
+          return out;
+        }
+        """
+    )
+    cleaned: list[dict[str, str]] = []
+    forced = (site_base or "").rstrip("/") or None
+    for row in rows or []:
+        tab = str(row.get("tab") or "").strip()
+        url = str(row.get("url") or "").strip()
+        name = str(row.get("name") or "").strip() or category_tab_display_name(tab)
+        if not tab or not url:
+            continue
+        if is_blacklisted_category(name=name, url=url):
+            continue
+        # Prefer durable calp-plus form on the requested (or page) site.
+        site = forced or site_base_from_url(url)
+        cleaned.append(
+            {
+                "name": name,
+                "tab": tab,
+                "url": build_calp_l1_url(site, tab),
+            }
+        )
+    return cleaned
+
+
+async def list_category_href_links(page: Page) -> list[dict[str, str]]:
+    """Collect classic /category/{id}/… listing links visible on the page."""
+    rows = await page.evaluate(
+        """
+        () => {
+          const out = [];
+          const seen = new Set();
+          for (const a of document.querySelectorAll('a[href*="/category/"]')) {
+            const href = (a.href || '').split('#')[0];
+            const m = href.match(/\\/category\\/(\\d+)\\/[^?]+\\.html/i);
+            if (!m) continue;
+            const id = m[1];
+            if (seen.has(id)) continue;
+            seen.add(id);
+            const name = (a.innerText || a.getAttribute('title') || '')
+              .trim().replace(/\\s+/g, ' ');
+            if (!name || name.length < 2 || name.length > 80) continue;
+            out.push({ name, url: href, category_id: id });
+          }
+          return out;
+        }
+        """
+    )
+    cleaned: list[dict[str, str]] = []
+    for row in rows or []:
+        name = str(row.get("name") or "").strip()
+        url = str(row.get("url") or "").strip()
+        cat_id = str(row.get("category_id") or "").strip()
+        if not name or not url or not cat_id:
+            continue
+        if is_blacklisted_category(name=name, url=url):
+            continue
+        cleaned.append(
+            {
+                "name": name,
+                "url": with_listing_filters(url),
+                "category_id": cat_id,
+            }
+        )
+    return cleaned
+
+
 async def list_calp_lv3_names(page: Page) -> list[str]:
     names = await page.evaluate(
         """
@@ -2201,6 +2410,240 @@ def worker_user_data_dir(worker_id: int) -> Path:
     return USER_DATA_DIR / f"worker-{worker_id}"
 
 
+async def detect_listing_load_mode(page: Page) -> str:
+    """Inspect the live page: pagination controls → flip pages, else infinite scroll."""
+    # Pager often sits below the fold on wholesale pages.
+    try:
+        await page.evaluate(
+            """
+            () => {
+              const sh = Math.max(
+                document.body ? document.body.scrollHeight : 0,
+                document.documentElement ? document.documentElement.scrollHeight : 0
+              );
+              window.scrollTo(0, Math.max(0, sh - (window.innerHeight || 800)));
+            }
+            """
+        )
+        await page.wait_for_timeout(450)
+    except Exception as exc:
+        if is_browser_dead(exc, page=page):
+            raise
+
+    info = await page.evaluate(
+        """
+        () => {
+          const visible = (el) => {
+            if (!el) return false;
+            const st = window.getComputedStyle(el);
+            if (!st || st.display === 'none' || st.visibility === 'hidden') return false;
+            const r = el.getBoundingClientRect();
+            return r.width > 2 && r.height > 2;
+          };
+          const pagerSelectors = [
+            '.comet-pagination',
+            '[class*="Pagination"]',
+            '[class*="pagination"]',
+            'ul.pagination',
+            'nav[aria-label*="agination" i]',
+            '[data-spm*="pagination"]',
+          ];
+          let hasPager = false;
+          for (const sel of pagerSelectors) {
+            for (const el of document.querySelectorAll(sel)) {
+              if (visible(el)) { hasPager = true; break; }
+            }
+            if (hasPager) break;
+          }
+          let pageLinks = 0;
+          for (const a of document.querySelectorAll('a[href*="page="]')) {
+            if (visible(a)) pageLinks += 1;
+          }
+          let hasNext = false;
+          for (const el of document.querySelectorAll('a, button, li, span')) {
+            if (!visible(el)) continue;
+            const label = (
+              el.getAttribute('aria-label') || el.getAttribute('title') || el.innerText || ''
+            ).trim().toLowerCase();
+            if (!label) continue;
+            if (
+              label === 'next' ||
+              label === '>' ||
+              label === '›' ||
+              label.includes('next page') ||
+              label === '下一页'
+            ) {
+              hasNext = true;
+              break;
+            }
+          }
+          return {
+            hasPager,
+            pageLinks,
+            hasNext,
+            hasPagination: hasPager || pageLinks >= 2 || hasNext,
+          };
+        }
+        """
+    )
+    try:
+        await page.evaluate("window.scrollTo(0, 0)")
+        await page.wait_for_timeout(150)
+    except Exception as exc:
+        if is_browser_dead(exc, page=page):
+            raise
+
+    has_dom = bool((info or {}).get("hasPagination"))
+    mode = infer_listing_load_mode(
+        has_pagination_dom=has_dom,
+        url=page.url or "",
+    )
+    return mode
+
+
+async def click_listing_next_page(page: Page) -> bool:
+    """Click a visible Next / page-N control when present."""
+    await dismiss_popups(page)
+    return bool(
+        await page.evaluate(
+            """
+            () => {
+              const visible = (el) => {
+                if (!el) return false;
+                const st = window.getComputedStyle(el);
+                if (!st || st.display === 'none' || st.visibility === 'hidden') return false;
+                const r = el.getBoundingClientRect();
+                return r.width > 2 && r.height > 2;
+              };
+              const candidates = [];
+              for (const el of document.querySelectorAll(
+                'a, button, li, span, div[role="button"]'
+              )) {
+                if (!visible(el)) continue;
+                const label = (
+                  el.getAttribute('aria-label') || el.getAttribute('title') || el.innerText || ''
+                ).trim().toLowerCase();
+                const href = (el.getAttribute('href') || '').toLowerCase();
+                const cls = (el.className || '').toString().toLowerCase();
+                const disabled =
+                  el.getAttribute('aria-disabled') === 'true' ||
+                  el.hasAttribute('disabled') ||
+                  cls.includes('disabled') ||
+                  cls.includes('is-disabled');
+                if (disabled) continue;
+                let score = 0;
+                if (label === 'next' || label === '下一页' || label.includes('next page')) score = 5;
+                else if (label === '>' || label === '›' || label === '»') score = 4;
+                else if (cls.includes('next') && (href.includes('page=') || label)) score = 3;
+                else if (/[?&]page=\\d+/.test(href) && /page=([2-9]|\\d{2,})/.test(href)) score = 2;
+                if (score > 0) candidates.push({ el, score });
+              }
+              candidates.sort((a, b) => b.score - a.score);
+              if (!candidates.length) return false;
+              const target = candidates[0].el;
+              target.scrollIntoView({ block: 'center' });
+              target.click();
+              return true;
+            }
+            """
+        )
+    )
+
+
+async def _ingest_listing_products(
+    page: Page,
+    category_name: str,
+    site_base: str,
+    seen_links: set[str],
+    collector: ListingCollector,
+    es_writer: ElasticsearchUrlWriter | None,
+    *,
+    seen_ids: set[str],
+    quality_ids: set[str],
+    enriched_ids: set[str],
+    metrics_by_id: dict[str, ListingProduct],
+    worker_id: int,
+    round_label: str,
+) -> tuple[set[str], int, int]:
+    """Extract / enrich / save one listing screen. Returns (current_ids, fresh, new_count)."""
+    products = await extract_products(page, site_base, collector)
+    collector.note_listing_total(await extract_listing_total_from_dom(page))
+
+    restored: list[ListingProduct] = []
+    for product in products:
+        cached = metrics_by_id.get(product.product_id)
+        if cached is None:
+            restored.append(product)
+            continue
+        restored.append(
+            ListingProduct(
+                product_id=product.product_id,
+                url=product.url or cached.url,
+                source=product.source or cached.source,
+                title=product.title or cached.title,
+                price=product.price if product.price is not None else cached.price,
+                rating=product.rating if product.rating is not None else cached.rating,
+                reviews=product.reviews if product.reviews is not None else cached.reviews,
+                sold_count=(
+                    product.sold_count
+                    if product.sold_count is not None
+                    else cached.sold_count
+                ),
+            )
+        )
+    products = restored
+    current_ids = {p.product_id for p in products}
+    fresh = current_ids - seen_ids
+
+    if ENRICH_MODE == "all":
+        await enrich_rating_reviews(page, products)
+    elif ENRICH_MODE == "new":
+        pending = [
+            p
+            for p in products
+            if p.product_id not in enriched_ids
+            and (
+                p.rating is None
+                or p.reviews is None
+                or (QUALITY_FILTER and p.sold_count is None)
+            )
+        ]
+        if pending:
+            await enrich_rating_reviews(page, pending)
+            enriched_ids.update(p.product_id for p in pending)
+
+    for product in products:
+        metrics_by_id[product.product_id] = product
+        if product_passes_quality(product):
+            quality_ids.add(product.product_id)
+
+    new_count, _quality_n = save_new_products(
+        products, seen_links, category_name, es_writer
+    )
+    if es_writer is not None:
+        es_writer.flush()
+
+    with_metrics = sum(
+        1 for p in products if p.rating is not None and p.reviews is not None
+    )
+    total_hint = (
+        f"，页面/API 宣称总数 {collector.listing_total}"
+        if collector.listing_total is not None
+        else ""
+    )
+    quality_hint = (
+        f"，质量门累计通过 {len(quality_ids)}" if QUALITY_FILTER else ""
+    )
+    worker_log(
+        worker_id,
+        f"{round_label}：可见/API 合计 {len(products)} 个"
+        f"（{with_metrics} 个含评分+评论数），"
+        f"本轮新 ID {len(fresh)} 个，保存新增 {new_count} 个"
+        f"{quality_hint}{total_hint}",
+    )
+    return current_ids, len(fresh), new_count
+
+
 async def crawl_infinite_scroll(
     page: Page,
     category_name: str,
@@ -2242,87 +2685,24 @@ async def crawl_infinite_scroll(
             await handle_captcha(page, worker_id=worker_id)
             if listing_url and await is_login_page(page):
                 await safe_goto(page, listing_url, worker_id=worker_id)
-        products = await extract_products(page, site_base, collector)
-        collector.note_listing_total(await extract_listing_total_from_dom(page))
 
-        # Re-apply metrics gathered earlier this category run (esp. feedback enrich).
-        restored: list[ListingProduct] = []
-        for product in products:
-            cached = metrics_by_id.get(product.product_id)
-            if cached is None:
-                restored.append(product)
-                continue
-            restored.append(
-                ListingProduct(
-                    product_id=product.product_id,
-                    url=product.url or cached.url,
-                    source=product.source or cached.source,
-                    title=product.title or cached.title,
-                    price=product.price if product.price is not None else cached.price,
-                    rating=product.rating if product.rating is not None else cached.rating,
-                    reviews=product.reviews if product.reviews is not None else cached.reviews,
-                    sold_count=(
-                        product.sold_count
-                        if product.sold_count is not None
-                        else cached.sold_count
-                    ),
-                )
-            )
-        products = restored
-
-        current_ids = {p.product_id for p in products}
-        fresh = current_ids - seen_ids
-
-        if ENRICH_MODE == "all":
-            await enrich_rating_reviews(page, products)
-        elif ENRICH_MODE == "new":
-            pending = [
-                p
-                for p in products
-                if p.product_id not in enriched_ids
-                and (
-                    p.rating is None
-                    or p.reviews is None
-                    or (QUALITY_FILTER and p.sold_count is None)
-                )
-            ]
-            if pending:
-                await enrich_rating_reviews(page, pending)
-                enriched_ids.update(p.product_id for p in pending)
-
-        for product in products:
-            metrics_by_id[product.product_id] = product
-            if product_passes_quality(product):
-                quality_ids.add(product.product_id)
-
-        new_count, _quality_n = save_new_products(
-            products, seen_links, category_name, es_writer
+        current_ids, fresh_n, new_count = await _ingest_listing_products(
+            page,
+            category_name,
+            site_base,
+            seen_links,
+            collector,
+            es_writer,
+            seen_ids=seen_ids,
+            quality_ids=quality_ids,
+            enriched_ids=enriched_ids,
+            metrics_by_id=metrics_by_id,
+            worker_id=worker_id,
+            round_label=f"滚动第 {round_no} 轮",
         )
-        if es_writer is not None:
-            es_writer.flush()
         stats.new_count += new_count
-        with_metrics = sum(
-            1 for p in products if p.rating is not None and p.reviews is not None
-        )
-        total_hint = (
-            f"，页面/API 宣称总数 {collector.listing_total}"
-            if collector.listing_total is not None
-            else ""
-        )
-        quality_hint = (
-            f"，质量门累计通过 {len(quality_ids)}"
-            if QUALITY_FILTER
-            else ""
-        )
-        worker_log(
-            worker_id,
-            f"滚动第 {round_no} 轮：可见/API 合计 {len(products)} 个"
-            f"（{with_metrics} 个含评分+评论数），"
-            f"本轮新 ID {len(fresh)} 个，保存新增 {new_count} 个"
-            f"{quality_hint}{total_hint}",
-        )
 
-        if (not current_ids or not fresh) and round_no > 1:
+        if (not current_ids or fresh_n == 0) and round_no > 1:
             consecutive_dup += 1
         else:
             consecutive_dup = 0
@@ -2342,6 +2722,158 @@ async def crawl_infinite_scroll(
     stats.quality_passed = len(quality_ids)
     stats.listing_total = collector.listing_total
     return stats
+
+
+async def crawl_paginated(
+    page: Page,
+    category_name: str,
+    site_base: str,
+    seen_links: set[str],
+    collector: ListingCollector,
+    es_writer: ElasticsearchUrlWriter | None = None,
+    *,
+    worker_id: int = 0,
+    listing_url: str | None = None,
+) -> CategoryCrawlStats:
+    """Flip ?page=N (and click Next when needed) until no new product IDs."""
+    stats = CategoryCrawlStats()
+    seen_ids: set[str] = set()
+    quality_ids: set[str] = set()
+    enriched_ids: set[str] = set()
+    metrics_by_id: dict[str, ListingProduct] = {}
+    consecutive_dup = 0
+    page_no = 1
+    base_url = with_listing_filters(listing_url or page.url or "")
+
+    while True:
+        if MAX_PAGES_PER_CATEGORY > 0 and page_no > MAX_PAGES_PER_CATEGORY:
+            worker_log(
+                worker_id,
+                f"达到最大翻页数 {MAX_PAGES_PER_CATEGORY}，停止：{category_name}",
+            )
+            break
+
+        page_url = build_page_url(base_url, page_no)
+        worker_log(worker_id, f"打开第 {page_no} 页：{page_url}")
+        collector.clear()
+        await safe_goto(page, page_url, worker_id=worker_id)
+        await dismiss_popups(page)
+        await handle_captcha(page, worker_id=worker_id)
+        if await is_login_page(page):
+            worker_log(worker_id, "翻页中被踢到登录页，等待登录后重开。")
+            await wait_until_unblocked(page, kind="登录", worker_id=worker_id)
+            await safe_goto(page, page_url, worker_id=worker_id)
+        # Only click Orders on page 1 — re-clicking resets SPA back to page 1.
+        if page_no == 1:
+            await apply_orders_sort_ui(page, worker_id=worker_id)
+        await sleep(short=page_no > 1)
+
+        current_ids, fresh_n, new_count = await _ingest_listing_products(
+            page,
+            category_name,
+            site_base,
+            seen_links,
+            collector,
+            es_writer,
+            seen_ids=seen_ids,
+            quality_ids=quality_ids,
+            enriched_ids=enriched_ids,
+            metrics_by_id=metrics_by_id,
+            worker_id=worker_id,
+            round_label=f"第 {page_no} 页",
+        )
+        stats.new_count += new_count
+
+        if not current_ids:
+            worker_log(worker_id, f"第 {page_no} 页没有数据，判定到最后一页：{category_name}")
+            break
+
+        if page_no > 1 and fresh_n == 0:
+            consecutive_dup += 1
+            if consecutive_dup >= CONSECUTIVE_DUPLICATE_PAGES_TO_STOP:
+                worker_log(
+                    worker_id,
+                    f"连续 {consecutive_dup} 页无新商品，停止翻页：{category_name}",
+                )
+                break
+            # URL page= may be ignored by SPA — try clicking Next once.
+            if await click_listing_next_page(page):
+                worker_log(worker_id, f"第 {page_no} 页无新 ID，已点击 Next 控件重试")
+                await page.wait_for_timeout(800)
+                await handle_captcha(page, worker_id=worker_id)
+                current_ids2, fresh_n2, new_count2 = await _ingest_listing_products(
+                    page,
+                    category_name,
+                    site_base,
+                    seen_links,
+                    collector,
+                    es_writer,
+                    seen_ids=seen_ids,
+                    quality_ids=quality_ids,
+                    enriched_ids=enriched_ids,
+                    metrics_by_id=metrics_by_id,
+                    worker_id=worker_id,
+                    round_label=f"第 {page_no} 页(Next)",
+                )
+                stats.new_count += new_count2
+                current_ids = current_ids | current_ids2
+                if fresh_n2 > 0:
+                    consecutive_dup = 0
+                    seen_ids.update(current_ids)
+                    page_no += 1
+                    await sleep()
+                    continue
+        else:
+            consecutive_dup = 0
+
+        seen_ids.update(current_ids)
+        page_no += 1
+        await sleep()
+
+    stats.product_count = len(seen_ids)
+    stats.quality_passed = len(quality_ids)
+    stats.listing_total = collector.listing_total
+    return stats
+
+
+async def crawl_listing(
+    page: Page,
+    category_name: str,
+    site_base: str,
+    seen_links: set[str],
+    collector: ListingCollector,
+    es_writer: ElasticsearchUrlWriter | None = None,
+    *,
+    worker_id: int = 0,
+    listing_url: str | None = None,
+) -> CategoryCrawlStats:
+    """Auto-detect pagination vs infinite scroll, then crawl accordingly."""
+    mode = await detect_listing_load_mode(page)
+    worker_log(
+        worker_id,
+        f"列表加载方式：{'翻页' if mode == 'pagination' else '无限下滑'} — {category_name}",
+    )
+    if mode == "pagination":
+        return await crawl_paginated(
+            page,
+            category_name,
+            site_base,
+            seen_links,
+            collector,
+            es_writer,
+            worker_id=worker_id,
+            listing_url=listing_url,
+        )
+    return await crawl_infinite_scroll(
+        page,
+        category_name,
+        site_base,
+        seen_links,
+        collector,
+        es_writer,
+        worker_id=worker_id,
+        listing_url=listing_url,
+    )
 
 
 async def _prepare_calp_lv3(
@@ -2496,7 +3028,7 @@ async def crawl_category(
             await apply_orders_sort_ui(page, worker_id=worker_id)
 
     _merge(
-        await crawl_infinite_scroll(
+        await crawl_listing(
             page,
             category_name,
             site_base,
@@ -2579,7 +3111,7 @@ async def crawl_category(
                         continue
                     collector.clear()
                     _merge(
-                        await crawl_infinite_scroll(
+                        await crawl_listing(
                             page,
                             target_name,
                             site_base,
@@ -2600,7 +3132,7 @@ async def crawl_category(
         await handle_captcha(page, worker_id=worker_id)
         await apply_orders_sort_ui(page, worker_id=worker_id)
         _merge(
-            await crawl_infinite_scroll(
+            await crawl_listing(
                 page,
                 category_name,
                 site_base,
@@ -2887,7 +3419,7 @@ async def crawl_worker(
                 names = ", ".join(c.name for c in batch)
                 print(
                     f"[claim] device={claim_client.device_id} "
-                    f"认领 {len(batch)} 个：{names}"
+                    f"随机认领 {len(batch)} 个：{names}"
                 )
                 for cat in batch:
                     await category_queue.put(cat)
@@ -2982,17 +3514,21 @@ async def run_one_crawl_pass(
         assert claim_client is not None
         first = await asyncio.to_thread(claim_client.claim_batch, batch_size)
         if not first:
-            print("ES 无可认领类目（均已 claimed/done，或未 enabled）。")
+            print("ES 无可认领类目（均被占用租约中，或未 enabled）。")
             return CategoryCrawlStats()
         print(
-            f"[claim] device={claim_client.device_id} 首批认领 {len(first)} 个："
+            f"[claim] device={claim_client.device_id} 首批随机认领 {len(first)} 个："
             + ", ".join(c.name for c in first)
         )
         for cat in first:
             await category_queue.put(cat)
     else:
-        for item in categories:
+        shuffled = list(categories)
+        random.shuffle(shuffled)
+        for item in shuffled:
             await category_queue.put(item)
+        for _ in range(workers):
+            await category_queue.put(None)
         for _ in range(workers):
             await category_queue.put(None)
 
@@ -3096,6 +3632,212 @@ async def bootstrap_subcategory_seeds(
     return total
 
 
+def write_discovered_category_files(
+    docs: list[dict],
+    *,
+    yaml_path: Path,
+    jsonl_path: Path,
+) -> None:
+    """Persist discovered seeds to YAML (L1) + JSONL (all)."""
+    yaml_path.parent.mkdir(parents=True, exist_ok=True)
+    jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+    l1 = [
+        {"name": d["name"], "url": d["url"]}
+        for d in docs
+        if d.get("seed_type") == "calp_l1" and d.get("name") and d.get("url")
+    ]
+    # Prefer L1 list for YAML; if empty, fall back to any top-level (no ' > ').
+    if not l1:
+        l1 = [
+            {"name": d["name"], "url": d["url"]}
+            for d in docs
+            if d.get("name")
+            and d.get("url")
+            and " > " not in str(d.get("name") or "")
+        ]
+    lines = [
+        "# Auto-generated by discover_categories — do not edit by hand.",
+        f"# Generated at {utc_now_iso()}",
+        "categories:",
+    ]
+    for item in l1:
+        lines.append(f"  - name: {item['name']}")
+        lines.append(f"    url: {item['url']}")
+        lines.append("")
+    yaml_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    with jsonl_path.open("w", encoding="utf-8") as fh:
+        for doc in docs:
+            fh.write(json.dumps(doc, ensure_ascii=False) + "\n")
+
+
+async def run_category_url_discovery(
+    playwright,
+    *,
+    site_base: str = "https://www.aliexpress.us",
+    claim_client: CategoryClaimClient | None = None,
+    include_lv3: bool = True,
+    include_category_hrefs: bool = True,
+    yaml_out: Path | None = None,
+    jsonl_out: Path | None = None,
+    workers: int = 1,
+) -> dict[str, int]:
+    """Crawl calp L1 tabs (+ optional lv3 /category links) and upsert ES seeds.
+
+    This is the pre-product step: only category URLs, no listing scroll.
+    """
+    site_base = (site_base or "https://www.aliexpress.us").rstrip("/")
+    yaml_path = yaml_out or (BASE_DIR / "config" / "categories.discovered.yaml")
+    jsonl_path = jsonl_out or (BASE_DIR / "data" / "category_urls.jsonl")
+    start_url = f"{site_base}/p/calp-plus/index.html"
+
+    print("=" * 60)
+    print("AliExpress 类目 URL 发现 (discover_categories)")
+    print("=" * 60)
+    print(f"站点: {site_base}")
+    print(f"入口: {start_url}")
+    print(f"子类目 lv3: {'是' if include_lv3 else '否'}")
+    print(f"/category/ 链接: {'是' if include_category_hrefs else '否'}")
+    if claim_client is not None:
+        print(f"ES 类目索引: {claim_client.index}")
+    else:
+        print("ES 类目索引: 关闭（仅写本地文件）")
+    print(f"YAML: {yaml_path}")
+    print(f"JSONL: {jsonl_path}")
+    print()
+
+    context, page, _collector = await create_browser(playwright, 0, workers=workers)
+    all_docs: list[dict] = []
+    stats = {"l1": 0, "lv3": 0, "category_href": 0, "upserted": 0}
+    try:
+        await safe_goto(page, start_url, worker_id=0)
+        await dismiss_popups(page)
+        await handle_captcha(page, worker_id=0)
+        await page.wait_for_timeout(1200)
+
+        l1_tabs = await list_calp_l1_tabs(page, site_base=site_base)
+        if not l1_tabs:
+            # Some sessions land without nav; open a known tab then re-scan.
+            fallback = build_calp_l1_url(site_base, "automotive")
+            print(f"首屏未发现 L1 tabs，尝试打开 {fallback}", flush=True)
+            await safe_goto(page, fallback, worker_id=0)
+            await dismiss_popups(page)
+            await handle_captcha(page, worker_id=0)
+            await page.wait_for_timeout(1200)
+            l1_tabs = await list_calp_l1_tabs(page, site_base=site_base)
+
+        l1_docs = build_l1_seed_docs(l1_tabs, site_base=site_base)
+        all_docs.extend(l1_docs)
+        stats["l1"] = len(l1_docs)
+        print(f"发现 L1 类目 {len(l1_docs)} 个（黑名单已过滤）", flush=True)
+        for doc in l1_docs:
+            print(f"  - {doc['name']} -> {doc['category_tab']}", flush=True)
+
+        if claim_client is not None and l1_docs:
+            n = await asyncio.to_thread(claim_client.upsert_seeds, l1_docs)
+            stats["upserted"] += n
+            print(f"已写入 ES L1 seeds {n}/{len(l1_docs)}", flush=True)
+
+        for idx, doc in enumerate(l1_docs, start=1):
+            name, url = doc["name"], doc["url"]
+            priority = int(doc.get("priority") or 100)
+            print(f"[{idx}/{len(l1_docs)}] 展开子类目：{name}", flush=True)
+            try:
+                if include_lv3:
+                    lv3_docs = await discover_calp_lv3_seed_docs(
+                        page,
+                        name,
+                        url,
+                        worker_id=0,
+                        parent_priority=priority,
+                    )
+                    if lv3_docs:
+                        all_docs.extend(lv3_docs)
+                        stats["lv3"] += len(lv3_docs)
+                        print(f"  {name}: lv3 {len(lv3_docs)}", flush=True)
+                        if claim_client is not None:
+                            n = await asyncio.to_thread(
+                                claim_client.upsert_seeds, lv3_docs
+                            )
+                            stats["upserted"] += n
+                    else:
+                        print(f"  {name}: lv3 0", flush=True)
+                else:
+                    await safe_goto(page, with_listing_filters(url), worker_id=0)
+                    await dismiss_popups(page)
+                    await handle_captcha(page, worker_id=0)
+                    await page.wait_for_timeout(800)
+
+                if include_category_hrefs:
+                    href_rows = await list_category_href_links(page)
+                    href_docs: list[dict] = []
+                    for i, row in enumerate(href_rows):
+                        child_name = f"{name} > {row['name']}"
+                        if is_blacklisted_category(name=child_name, url=row["url"]):
+                            continue
+                        href_docs.append(
+                            {
+                                "name": child_name,
+                                "display_name": row["name"],
+                                "url": row["url"],
+                                "parent_name": name,
+                                "parent_url": with_listing_filters(url),
+                                "category_id": row.get("category_id"),
+                                "seed_type": "category_href",
+                                "enabled": True,
+                                "priority": priority * 1000 + 500 + i,
+                                "site": site_host_from_url(url),
+                            }
+                        )
+                    if href_docs:
+                        all_docs.extend(href_docs)
+                        stats["category_href"] += len(href_docs)
+                        print(f"  {name}: /category/ {len(href_docs)}", flush=True)
+                        if claim_client is not None:
+                            n = await asyncio.to_thread(
+                                claim_client.upsert_seeds, href_docs
+                            )
+                            stats["upserted"] += n
+            except Exception as exc:
+                import traceback
+
+                print(f"发现失败 {name}: {exc}", flush=True)
+                traceback.print_exc()
+                if is_browser_dead(exc, page=page):
+                    await close_browser(context)
+                    context, page, _collector = await create_browser(
+                        playwright, 0, workers=workers
+                    )
+    except Exception as exc:
+        import traceback
+
+        print(f"类目发现中断: {exc}", flush=True)
+        traceback.print_exc()
+    finally:
+        await close_browser(context)
+
+    # De-dupe by name keeping first (also on partial failure).
+    deduped: list[dict] = []
+    seen_names: set[str] = set()
+    for doc in all_docs:
+        key = str(doc.get("name") or "").strip()
+        if not key or key in seen_names:
+            continue
+        seen_names.add(key)
+        deduped.append(doc)
+
+    write_discovered_category_files(deduped, yaml_path=yaml_path, jsonl_path=jsonl_path)
+    print()
+    print(
+        f"完成：L1={stats['l1']} lv3={stats['lv3']} "
+        f"category_href={stats['category_href']} "
+        f"ES写入≈{stats['upserted']} 本地={len(deduped)}",
+        flush=True,
+    )
+    print(f"YAML -> {yaml_path}", flush=True)
+    print(f"JSONL -> {jsonl_path}", flush=True)
+    return stats
+
+
 async def main_async() -> None:
     global CURRENT_CRAWL_ROUND
     claim_client = build_claim_client()
@@ -3141,10 +3883,14 @@ async def main_async() -> None:
         print(f"子类目最大深度: {MAX_SUBCATEGORY_DEPTH}")
         print(f"calp 每子类重开: {'开启' if CALP_RELOAD_EACH_LV3 else '关闭（页内点击）'}")
     print(
-        f"滚动重复停止阈值: 连续 {CONSECUTIVE_DUPLICATE_SCROLLS_TO_STOP} 轮无新商品"
+        f"下滑停止阈值: 连续 {CONSECUTIVE_DUPLICATE_SCROLLS_TO_STOP} 轮无新商品；"
+        f"翻页停止阈值: 连续 {CONSECUTIVE_DUPLICATE_PAGES_TO_STOP} 页无新商品"
     )
     if MAX_SCROLL_ROUNDS > 0:
         print(f"最大滚动轮数: {MAX_SCROLL_ROUNDS}")
+    if MAX_PAGES_PER_CATEGORY > 0:
+        print(f"最大翻页数: {MAX_PAGES_PER_CATEGORY}")
+    print("列表模式: 按页面自动检测（翻页 / 无限下滑）")
     print(f"请求间隔: {REQUEST_DELAY_MS[0]}–{REQUEST_DELAY_MS[1]} ms")
     print(f"评分补全: {ENRICH_MODE}" + (
         f"（并发 {ENRICH_CONCURRENCY}）" if ENRICH_MODE != "off" else ""
@@ -3258,6 +4004,47 @@ async def main_async() -> None:
 
 
 def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="AliExpress link crawler")
+    parser.add_argument(
+        "--discover-categories",
+        action="store_true",
+        help="Only discover category URLs (L1/lv3) into ES/YAML; skip product crawl",
+    )
+    parser.add_argument(
+        "--site",
+        choices=("us", "com"),
+        default="us",
+        help="Used with --discover-categories (default: us)",
+    )
+    parser.add_argument(
+        "--l1-only",
+        action="store_true",
+        help="With --discover-categories: only L1 tabs",
+    )
+    args, _unknown = parser.parse_known_args()
+    if args.discover_categories:
+        site_base = (
+            "https://www.aliexpress.com"
+            if args.site == "com"
+            else "https://www.aliexpress.us"
+        )
+
+        async def _discover() -> None:
+            claim_client = build_claim_client()
+            async with async_playwright() as playwright:
+                await run_category_url_discovery(
+                    playwright,
+                    site_base=site_base,
+                    claim_client=claim_client,
+                    include_lv3=not args.l1_only,
+                    include_category_hrefs=not args.l1_only,
+                    workers=1,
+                )
+
+        asyncio.run(_discover())
+        return
     asyncio.run(main_async())
 
 

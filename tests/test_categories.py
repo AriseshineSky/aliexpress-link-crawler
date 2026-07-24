@@ -43,6 +43,51 @@ class CategoryConfigTests(unittest.TestCase):
         if self._old_es_cats is not None:
             os.environ["ELASTICSEARCH_INDEX_CATEGORIES"] = self._old_es_cats
 
+    def test_build_page_url(self) -> None:
+        from alilj import build_page_url
+
+        base = (
+            "https://www.aliexpress.us/w/wholesale-testing-and-inspection.html"
+            "?maxPrice=99&SortType=total_tranpro_desc"
+        )
+        self.assertEqual(build_page_url(base, 1), base)
+        page2 = build_page_url(base, 2)
+        self.assertIn("page=2", page2)
+        self.assertIn("maxPrice=99", page2)
+        cat = "https://www.aliexpress.us/category/34/auto.html?SortType=total_tranpro_desc"
+        cat2 = build_page_url(cat, 3)
+        self.assertIn("page=3", cat2)
+        self.assertIn("CatId=34", cat2)
+
+    def test_infer_listing_load_mode(self) -> None:
+        from alilj import infer_listing_load_mode
+
+        self.assertEqual(
+            infer_listing_load_mode(has_pagination_dom=True, url="https://x/calp-plus"),
+            "pagination",
+        )
+        self.assertEqual(
+            infer_listing_load_mode(
+                has_pagination_dom=False,
+                url="https://www.aliexpress.us/w/wholesale-lip.html",
+            ),
+            "pagination",
+        )
+        self.assertEqual(
+            infer_listing_load_mode(
+                has_pagination_dom=False,
+                url="https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=auto",
+            ),
+            "scroll",
+        )
+        self.assertEqual(
+            infer_listing_load_mode(
+                has_pagination_dom=False,
+                url="https://www.aliexpress.us/category/34/auto.html",
+            ),
+            "pagination",
+        )
+
     def test_with_listing_filters_price_and_stars(self) -> None:
         url = (
             "https://www.aliexpress.us/category/0/Car-Gadgets-%26-Appliances.html"
@@ -137,6 +182,68 @@ class CategoryConfigTests(unittest.TestCase):
         self.assertIn("calpLv3=", docs[0]["calp_url"])
         self.assertEqual(docs[0]["parent_name"], "US / Beauty & Health")
         self.assertEqual(docs[0]["priority"], 3001)
+
+    def test_category_tab_display_name(self) -> None:
+        from alilj import category_tab_display_name
+
+        self.assertEqual(category_tab_display_name("automotive"), "Automotive")
+        self.assertEqual(
+            category_tab_display_name("toys_%26_games"),
+            "Toys & Games",
+        )
+
+    def test_build_l1_seed_docs_filters_blacklist(self) -> None:
+        from alilj import build_calp_l1_url, build_l1_seed_docs
+
+        tabs = [
+            {
+                "name": "Automotive",
+                "tab": "automotive",
+                "url": build_calp_l1_url("https://www.aliexpress.us", "automotive"),
+            },
+            {
+                "name": "Women's Clothing",
+                "tab": "women's_clothing",
+                "url": build_calp_l1_url(
+                    "https://www.aliexpress.us", "women's_clothing"
+                ),
+            },
+        ]
+        docs = build_l1_seed_docs(tabs)
+        names = [d["name"] for d in docs]
+        self.assertIn("US / Automotive", names)
+        self.assertTrue(all("Clothing" not in n for n in names))
+        self.assertEqual(docs[0]["seed_type"], "calp_l1")
+        self.assertIn("categoryTab=automotive", docs[0]["url"])
+
+    def test_write_discovered_category_files(self) -> None:
+        import tempfile
+
+        from alilj import write_discovered_category_files
+
+        docs = [
+            {
+                "name": "US / Automotive",
+                "url": "https://www.aliexpress.us/p/calp-plus/index.html?categoryTab=automotive",
+                "seed_type": "calp_l1",
+            },
+            {
+                "name": "US / Automotive > Gauges",
+                "url": "https://www.aliexpress.us/w/wholesale-gauges.html",
+                "seed_type": "calp_lv3_wholesale",
+            },
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            yaml_path = Path(tmp) / "cats.yaml"
+            jsonl_path = Path(tmp) / "cats.jsonl"
+            write_discovered_category_files(
+                docs, yaml_path=yaml_path, jsonl_path=jsonl_path
+            )
+            text = yaml_path.read_text(encoding="utf-8")
+            self.assertIn("US / Automotive", text)
+            self.assertNotIn("Gauges", text)
+            lines = jsonl_path.read_text(encoding="utf-8").strip().splitlines()
+            self.assertEqual(len(lines), 2)
 
     def test_worker_user_data_dir(self) -> None:
         old = alilj.CRAWL_WORKERS

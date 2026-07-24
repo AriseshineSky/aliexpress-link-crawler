@@ -2,11 +2,16 @@
 """Multi-device category claim/lease via Elasticsearch crawl_categories index.
 
 Eligible seeds: enabled=true and crawl_status in {missing, pending, failed},
-or claimed with expired lease. Atomic scripted update marks claimed_by + lease.
+or claimed with expired lease. With reclaim_done=True (default for continuous
+crawl), done seeds are also eligible so URLs cycle indefinitely.
+
+Candidates are ordered randomly (ES random_score + local shuffle), not by
+priority. Atomic scripted update marks claimed_by + lease.
 """
 
 from __future__ import annotations
 
+import random
 import socket
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -157,13 +162,21 @@ class CategoryClaimClient:
         return {"bool": {"must": must}}
 
     def list_candidates(self, size: int = 50) -> list[dict[str, Any]]:
+        """Return a random sample of eligible seeds (not priority-ordered)."""
         if not self.enabled or self.client is None:
             return []
+        # random_score reshuffles each search so devices don't all claim the same head.
+        query: dict[str, Any] = {
+            "function_score": {
+                "query": self._eligible_query(),
+                "random_score": {"seed": random.randint(1, 2_147_483_647)},
+                "boost_mode": "replace",
+            }
+        }
         resp = self.client.search(
             index=self.index,
             size=max(1, size),
-            query=self._eligible_query(),
-            sort=[{"priority": {"order": "asc", "unmapped_type": "long"}}],
+            query=query,
             _source=["name", "url", "priority", "crawl_status", "claim_expires_at"],
         )
         rows: list[dict[str, Any]] = []
@@ -182,6 +195,7 @@ class CategoryClaimClient:
                     "crawl_status": src.get("crawl_status"),
                 }
             )
+        random.shuffle(rows)
         return rows
 
     def try_claim(self, doc_id: str) -> ClaimedCategory | None:
@@ -226,11 +240,11 @@ class CategoryClaimClient:
         return ClaimedCategory(doc_id=doc_id, name=name, url=url)
 
     def claim_batch(self, n: int) -> list[ClaimedCategory]:
-        """Claim up to n eligible categories for this device."""
+        """Claim up to n randomly selected eligible categories for this device."""
         if not self.enabled or self.client is None or n <= 0:
             return []
         claimed: list[ClaimedCategory] = []
-        # Over-fetch candidates; races drop some.
+        # Over-fetch candidates; races drop some. Order is already random.
         candidates = self.list_candidates(size=max(n * 3, n + 5))
         for row in candidates:
             if len(claimed) >= n:
