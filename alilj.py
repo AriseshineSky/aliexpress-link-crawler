@@ -60,20 +60,20 @@ MAX_PAGES_PER_CATEGORY = 0  # 翻页模式：0=不限制；>0 为最大页数
 MAX_SCROLL_ROUNDS = 0  # 下滑模式：0=不限制，直到连续无新商品
 CONSECUTIVE_DUPLICATE_SCROLLS_TO_STOP = 10
 CONSECUTIVE_DUPLICATE_PAGES_TO_STOP = 3  # 翻页：连续 N 页无新 ID 则停
-REQUEST_DELAY_MS = (600, 1200)  # 原 2000–4000，默认提速
-GOTO_SETTLE_MS = 800  # safe_goto 后固定等待，原 2500
-SCROLL_API_TIMEOUT_MS = 3500  # 滚动后等列表 API
-SCROLL_FALLBACK_MS = 1200  # API 超时回退等待，原固定 2200
-SCROLL_AFTER_API_MS = 250
-FIRST_ROUND_SETTLE_MS = 600  # 首轮原 1500
-CALP_CLICK_SETTLE_MS = 1000  # 点 lv3 后等待，原 2500
+REQUEST_DELAY_MS = (2500, 4500)  # 页间/轮间等待；过快易触发滑块
+GOTO_SETTLE_MS = 2000  # safe_goto 后固定等待
+SCROLL_API_TIMEOUT_MS = 4500  # 滚动后等列表 API
+SCROLL_FALLBACK_MS = 2000  # API 超时回退等待
+SCROLL_AFTER_API_MS = 400
+FIRST_ROUND_SETTLE_MS = 1200
+CALP_CLICK_SETTLE_MS = 1500  # 点 lv3 后等待
 CALP_RELOAD_EACH_LV3 = False  # True=每个子类目整页重开（更稳更慢）
 ENRICH_MODE = "new"  # off | new | all（默认补全新商品评分/评论）
-ENRICH_CONCURRENCY = 8
-ENRICH_DELAY_MS = 30
+ENRICH_CONCURRENCY = 4
+ENRICH_DELAY_MS = 80
 GOTO_MAX_RETRIES = 5
 GOTO_RETRY_BASE_DELAY_S = 5
-CRAWL_WORKERS = 2  # 并行 worker 数；每个 worker 独立浏览器，从队列领取分类
+CRAWL_WORKERS = 1  # 并行 worker 数；风控紧时保持 1
 LOGIN_RECOVERY_RETRIES = 8  # 登录/风控拦截后重新打开目标页的次数
 # Multi-device ES category claim (requires ELASTICSEARCH_INDEX_CATEGORIES).
 CATEGORY_CLAIM_MODE = True  # auto-disabled when ES categories unavailable
@@ -1472,12 +1472,45 @@ async def wait_until_unblocked(page: Page, *, kind: str, worker_id: int = 0) -> 
         still_login = await is_login_page(page)
         still_captcha = await sniff_captcha_signals(page)
         if kind == "登录" and not still_login:
-            worker_log(worker_id, "登录已完成，准备重新打开目标页。")
+            worker_log(worker_id, "登录已完成。")
             return True
         if kind != "登录" and not still_login and not still_captcha:
-            worker_log(worker_id, "验证已通过，准备重新打开目标页。")
+            worker_log(worker_id, "验证已通过，留在当前页继续（不刷新）。")
             return True
     worker_log(worker_id, f"等待{kind}结束，可能仍未恢复；将重试目标页。")
+    return False
+
+
+async def listing_page_looks_ready(page: Page, *, target_url: str = "") -> bool:
+    """True when captcha/login is gone and the page looks like a usable listing."""
+    if page.is_closed():
+        return False
+    if await is_login_page(page) or await sniff_captcha_signals(page):
+        return False
+    url = (page.url or "").lower()
+    if any(
+        marker in url
+        for marker in ("/w/wholesale-", "/p/calp-plus/", "/category/", "categorytab=")
+    ):
+        return True
+    target = (target_url or "").lower()
+    if target:
+        try:
+            want_path = urlsplit(target).path.rstrip("/").lower()
+            got_path = urlsplit(url).path.rstrip("/").lower()
+            if want_path and want_path in got_path:
+                return True
+        except Exception:
+            pass
+    try:
+        n = await page.evaluate(
+            """() => document.querySelectorAll('a[href*="/item/"]').length"""
+        )
+        if int(n or 0) >= 3:
+            return True
+    except Exception as exc:
+        if is_browser_dead(exc, page=page):
+            raise
     return False
 
 
@@ -1605,7 +1638,7 @@ async def ensure_seed_category_tab(
 
 
 async def safe_goto(page: Page, url: str, *, worker_id: int = 0) -> None:
-    """Goto url; if redirected to login/captcha, wait then reopen the target."""
+    """Goto url; on captcha stay after clearance (do not reload — reload re-triggers it)."""
     if page.is_closed():
         raise RuntimeError("浏览器页面已关闭，请重启爬虫")
     if is_blocked_category_url(url):
@@ -1622,7 +1655,8 @@ async def safe_goto(page: Page, url: str, *, worker_id: int = 0) -> None:
                 f"被重定向到登录页 ({recovery}/{LOGIN_RECOVERY_RETRIES})",
             )
             await wait_until_unblocked(page, kind="登录", worker_id=worker_id)
-            worker_log(worker_id, f"重新打开目标页：{url}")
+            # Login often lands on account home — must reopen the listing.
+            worker_log(worker_id, f"登录后重新打开目标页：{url}")
             continue
 
         slider_dragged = await drag_slider_if_present(page)
@@ -1632,8 +1666,17 @@ async def safe_goto(page: Page, url: str, *, worker_id: int = 0) -> None:
                 f"触发验证/风控 ({recovery}/{LOGIN_RECOVERY_RETRIES})",
             )
             await wait_until_unblocked(page, kind="验证/风控", worker_id=worker_id)
-            worker_log(worker_id, f"重新打开目标页：{url}")
-            continue
+            await dismiss_popups(page)
+            # Critical: do NOT reload after slider — that usually forces captcha again.
+            # The listing is already behind the challenge; scroll/paginate from here.
+            if await listing_page_looks_ready(page, target_url=url):
+                worker_log(worker_id, "验证通过，不刷新，直接继续当前列表页")
+                return
+            if await sniff_captcha_signals(page) or await is_login_page(page):
+                worker_log(worker_id, f"验证后仍异常，再试打开：{url}")
+                continue
+            worker_log(worker_id, "验证通过，留在当前页继续")
+            return
 
         # Still somehow on a login URL after overlays — retry.
         if is_login_url(page.url or ""):
@@ -2682,9 +2725,12 @@ async def crawl_infinite_scroll(
             await wait_until_unblocked(page, kind="登录", worker_id=worker_id)
             await safe_goto(page, listing_url, worker_id=worker_id)
         else:
-            await handle_captcha(page, worker_id=worker_id)
+            cleared = await handle_captcha(page, worker_id=worker_id)
             if listing_url and await is_login_page(page):
                 await safe_goto(page, listing_url, worker_id=worker_id)
+            elif cleared:
+                # Captcha cleared in-place — keep scrolling this page, do not reload.
+                worker_log(worker_id, "滚动中验证已通过，继续下滑（不刷新）")
 
         current_ids, fresh_n, new_count = await _ingest_listing_products(
             page,

@@ -36,7 +36,12 @@ export TMPDIR="${TMPDIR:-$ROOT/../.tmp}"
 export CRAWL_RECLAIM_DONE=1
 export CATEGORY_CLAIM_MODE=1
 export QUALITY_FILTER=1
-export HEADLESS="${HEADLESS:-1}"
+export HEADLESS="${HEADLESS:-0}"
+# Slower pacing to reduce captcha / punish redirects.
+export CRAWL_WORKERS="${CRAWL_WORKERS:-1}"
+export REQUEST_DELAY_MS="${REQUEST_DELAY_MS:-2500,4500}"
+export GOTO_SETTLE_MS="${GOTO_SETTLE_MS:-2000}"
+export ENRICH_CONCURRENCY="${ENRICH_CONCURRENCY:-4}"
 export PYTHONUNBUFFERED=1
 
 setsid "$PY" -u "$ROOT/alilj.py" >>"$LOG_FILE" 2>&1 </dev/null &
