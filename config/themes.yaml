@@ -1,0 +1,73 @@
+# 主题关键词 seeds —— 由 seed_theme_keywords.py 消费。
+# 每个 keyword 生成 AliExpress 批发搜索 URL：
+#   <site_base>/w/wholesale-<slug>.html（自动附加 maxPrice / 星级 / SortType 过滤）
+# 与现有 calp 子类目 lv3 生成 wholesale seeds 的形态完全一致，灌入 ES 后
+# 现有 claim / 循环抓取 / 质量门逻辑零改动自动生效。
+#
+# 注意：本表已排除服装类关键词（与 category_blacklist.yaml 的服装排除策略一致）。
+# 如需万圣节服装/cosplay 类，请自行在 keywords 里添加后再运行注入脚本。
+#
+# 用法：
+#   .venv/bin/python seed_theme_keywords.py --list        # 预览生成的 URL
+#   .venv/bin/python seed_theme_keywords.py               # 灌入 ES 类别索引（立即生效）
+#   .venv/bin/python seed_theme_keywords.py --no-es       # 只生成本地 yaml（CATEGORIES_FILE 可用）
+#   .venv/bin/python seed_theme_keywords.py --clean       # 节日结束后一键清理 ES seeds
+
+themes:
+  - name: Halloween
+    enabled: true
+    site: us
+    priority_base: 9900000
+    keywords:
+      # ---- 装饰 / 家居 ----
+      - halloween decorations
+      - halloween skeleton decorations
+      - halloween pumpkin decoration
+      - halloween spider web
+      - halloween inflatable
+      - halloween yard decorations
+      - halloween garland
+      - halloween window stickers
+      - halloween string lights
+      - halloween projector light
+      - halloween lantern
+      - halloween candles
+      - halloween tablecloth
+      - halloween throw pillow
+      - halloween rug
+      - halloween doormat
+      - halloween banner
+      # ---- 派对用品 ----
+      - halloween party supplies
+      - halloween party favors
+      - halloween tableware
+      - halloween cups
+      - halloween balloons
+      - halloween cake topper
+      - halloween cupcake toppers
+      - halloween cookie cutters
+      # ---- 讨糖 / 收纳 ----
+      - halloween candy bags
+      - trick or treat bags
+      - halloween gift bags
+      # ---- 玩具 / 游戏 ----
+      - halloween toys
+      - halloween plush
+      - halloween stickers
+      - halloween coloring book
+      - halloween puzzles
+      # ---- 宠物用品 ----
+      - halloween pet costume
+      - halloween pet accessories
+      - halloween pet collar
+      - halloween cat toys
+      # ---- 饰品 / 包袋 ----
+      - halloween earrings
+      - halloween necklace
+      - halloween ring
+      - halloween bracelet
+      - halloween hair clips
+      - halloween tote bag
+      # ---- 美甲 / 文具 ----
+      - halloween nail stickers
+      - halloween washi tape

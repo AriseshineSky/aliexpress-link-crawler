@@ -386,11 +386,13 @@ class CategoryClaimClient:
         must: list[dict[str, Any]] = [{"term": {"enabled": True}}]
         must.append({"bool": {"must_not": [{"ids": {"values": [ROUND_META_ID]}}]}})
         try:
-            return int(
-                self.client.count(index=self.index, query={"bool": {"must": must}})[
-                    "count"
-                ]
+            # elasticsearch-py 7.x: count() only accepts body=, not query=.
+            resp = self.client.search(
+                index=self.index,
+                size=0,
+                query={"bool": {"must": must}},
             )
+            return int((resp.get("hits") or {}).get("total", {}).get("value", 0))
         except Exception:
             return 0
 
